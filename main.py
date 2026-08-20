@@ -83,7 +83,7 @@ class InboundRecord(Base):
     warehouse = Column(String(50), default="광주냉장창고")
     exp_date = Column(String(20), nullable=False)
     is_weighed = Column(String(10), default="Y")
-    claim_reason = Column(String(255), nullable=True) # 클레임 상세 사유
+    claim_reason = Column(String(255), nullable=True)
     status = Column(String(20), default="IN_REQUEST") # IN_REQUEST, IN_CONFIRM, IN_DONE, IN_CLAIM
     grid_no = Column(String(50), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -92,7 +92,7 @@ class InventoryLot(Base):
     __tablename__ = "inventory_lots"
     id = Column(Integer, primary_key=True, index=True)
     sku_code = Column(String(50), nullable=False)
-    inbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d")) # 최초 입고일자
+    inbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
     bl_no = Column(String(50), nullable=True)
     trace_no = Column(String(50), nullable=False, index=True)
     brand = Column(String(50), nullable=True)
@@ -115,7 +115,7 @@ class OutboundRecord(Base):
     __tablename__ = "outbounds"
     id = Column(Integer, primary_key=True, index=True)
     outbound_no = Column(String(50), unique=True, index=True)
-    inbound_date = Column(String(20), nullable=True)  # 원본 입고일자
+    inbound_date = Column(String(20), nullable=True)
     outbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
     processed_date = Column(String(20), nullable=True) # 클레임/처리일자
     lot_id = Column(Integer, nullable=False)
@@ -134,7 +134,7 @@ class OutboundRecord(Base):
     exp_date = Column(String(20), nullable=False)
     warehouse = Column(String(50), nullable=False)
     is_weighed = Column(String(10), default="Y")
-    claim_reason = Column(String(255), nullable=True) # 클레임 사유
+    claim_reason = Column(String(255), nullable=True)
     status = Column(String(20), default="OUT_REQUEST") # OUT_REQUEST, OUT_CONFIRM, OUT_DONE, OUT_CLAIM
     grid_no = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -341,7 +341,7 @@ def delete_cut_master(cut_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "부위 마스터가 삭제되었습니다."}
 
-# 입고 API (클레임 등록 및 조회 포함)
+# 입고 API
 @app.get("/api/inbounds")
 def get_inbounds(
     status: str,
@@ -383,7 +383,6 @@ def register_inbound_claim(inbound_id: int, req: ClaimRegister, db: Session = De
     inbound = db.query(InboundRecord).filter(InboundRecord.id == inbound_id).first()
     if not inbound: raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
     
-    # 이미 입고완료된 경우 실재고에서 차감
     if inbound.status == "IN_DONE":
         lot = db.query(InventoryLot).filter(
             InventoryLot.trace_no == inbound.trace_no,
@@ -547,7 +546,7 @@ async def upload_inbound_excel(file: UploadFile = File(...), db: Session = Depen
         db.rollback()
         raise HTTPException(status_code=500, detail=f"엑셀 처리 오류: {str(e)}")
 
-# 현 재고장 & 출고 관리 (클레임 등록 및 조회 포함)
+# 현 재고장 & 출고 관리
 @app.get("/api/inventory")
 def get_inventory(db: Session = Depends(get_db)):
     return db.query(InventoryLot).filter(InventoryLot.current_box_qty > 0).order_by(InventoryLot.exp_date).all()
@@ -691,6 +690,79 @@ def advance_outbound(outbound_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": msg}
 
+# --- [통합 클레임 관리 API] ---
+@app.get("/api/claims")
+def get_claims(
+    stage: Optional[str] = None, # ALL, INBOUND, OUTBOUND
+    target_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    month: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    claims = []
+
+    if stage in [None, "ALL", "INBOUND"]:
+        q_in = db.query(InboundRecord).filter(InboundRecord.status == "IN_CLAIM")
+        if target_date: q_in = q_in.filter(InboundRecord.processed_date == target_date)
+        elif month: q_in = q_in.filter(InboundRecord.processed_date.like(f"{month}%"))
+        else:
+            if start_date: q_in = q_in.filter(InboundRecord.processed_date >= start_date)
+            if end_date: q_in = q_in.filter(InboundRecord.processed_date <= end_date)
+        for r in q_in.all():
+            claims.append({
+                "id": r.id,
+                "stage": "입고",
+                "inbound_date": r.inbound_date,
+                "processed_date": r.processed_date or r.inbound_date,
+                "doc_no": r.inbound_no,
+                "partner_name": r.vendor,
+                "warehouse": r.warehouse,
+                "bl_no": r.bl_no,
+                "trace_no": r.trace_no,
+                "brand": r.brand,
+                "item_name": r.item_name,
+                "cut_name": r.cut_name,
+                "box_qty": r.box_qty,
+                "weight_kg": r.weight_kg,
+                "total_amount": r.total_amount,
+                "claim_reason": r.claim_reason,
+                "grid_no": r.grid_no,
+                "raw_type": "INBOUND"
+            })
+
+    if stage in [None, "ALL", "OUTBOUND"]:
+        q_out = db.query(OutboundRecord).filter(OutboundRecord.status == "OUT_CLAIM")
+        if target_date: q_out = q_out.filter(OutboundRecord.processed_date == target_date)
+        elif month: q_out = q_out.filter(OutboundRecord.processed_date.like(f"{month}%"))
+        else:
+            if start_date: q_out = q_out.filter(OutboundRecord.processed_date >= start_date)
+            if end_date: q_out = q_out.filter(OutboundRecord.processed_date <= end_date)
+        for r in q_out.all():
+            claims.append({
+                "id": r.id,
+                "stage": "출고",
+                "inbound_date": r.inbound_date or "-",
+                "processed_date": r.processed_date or r.outbound_date,
+                "doc_no": r.outbound_no,
+                "partner_name": r.customer,
+                "warehouse": r.warehouse,
+                "bl_no": r.bl_no,
+                "trace_no": r.trace_no,
+                "brand": r.brand,
+                "item_name": r.item_name,
+                "cut_name": r.cut_name,
+                "box_qty": r.box_qty,
+                "weight_kg": r.weight_kg,
+                "total_amount": r.total_amount,
+                "claim_reason": r.claim_reason,
+                "grid_no": r.grid_no,
+                "raw_type": "OUTBOUND"
+            })
+
+    claims.sort(key=lambda x: x["processed_date"] or "", reverse=True)
+    return claims
+
 @app.post("/api/inventory/adjust")
 def adjust_stock(req: AdjustCreate, db: Session = Depends(get_db)):
     lot = db.query(InventoryLot).filter(InventoryLot.id == req.lot_id).first()
@@ -712,6 +784,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MeatFlow Enterprise ERP</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     :root {
       --primary: #2563eb;
@@ -748,7 +821,7 @@ HTML_PAGE = """<!DOCTYPE html>
     th { background: #f8fafc; color: var(--muted); padding: 11px 12px; border-bottom: 1px solid var(--border); text-align: left; font-weight: 600; white-space: nowrap; }
     td { padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
     tr:hover td { background: #f8fafc; }
-    .btn { padding: 4px 8px; border-radius: 6px; font-size: 0.78rem; font-weight: 600; border: 1px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+    .btn { padding: 5px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; border: 1px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
     .btn-primary { background: var(--primary); color: #fff; }
     .btn-success { background: #16a34a; color: #fff; }
     .btn-warning { background: #d97706; color: #fff; }
@@ -763,6 +836,8 @@ HTML_PAGE = """<!DOCTYPE html>
     .badge-warehouse { background: #f1f5f9; color: #475569; }
     .badge-shipping { background: #ede9fe; color: #6d28d9; }
     .badge-etc { background: #f3f4f6; color: #374151; }
+    .badge-stage-in { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+    .badge-stage-out { background: #fae8ff; color: #86198f; border: 1px solid #f5d0fe; }
     .grid-tag { background: #312e81; color: #e0e7ff; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: monospace; font-size: 0.78rem; }
     .bl-tag { font-family: monospace; font-weight: 700; color: #0284c7; }
     .brand-tag { background: #f1f5f9; color: #334155; padding: 2px 5px; border-radius: 4px; font-weight: 600; font-size: 0.76rem; }
@@ -787,6 +862,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="nav-category">프로세스 관리</div>
     <div class="nav-item active" onclick="switchMainTab('INBOUND', this)"><i class="bi bi-box-arrow-in-down"></i> 입고 관리</div>
     <div class="nav-item" onclick="switchMainTab('OUTBOUND', this)"><i class="bi bi-box-arrow-up"></i> 출고 관리 (재고장)</div>
+    <div class="nav-item" onclick="switchMainTab('CLAIM', this)"><i class="bi bi-exclamation-octagon-fill" style="color:#ef4444;"></i> 클레임 관리</div>
 
     <div class="nav-category">기본정보 마스터</div>
     <div class="nav-item" onclick="switchMainTab('PARTNER', this)"><i class="bi bi-building"></i> 거래처 정보 관리</div>
@@ -810,12 +886,14 @@ HTML_PAGE = """<!DOCTYPE html>
           <input type="date" id="filter_end" class="filter-input" />
         </div>
         
-        <div class="filter-group" style="flex-grow:1; max-width:280px;">
-          <input type="text" id="filter_keyword" class="filter-input" style="width:100%;" placeholder="품목/부위/브랜드/BL/이력번호 검색..." onkeypress="if(event.keyCode==13){loadData();}" />
+        <!-- 검색창과 [조회] 버튼 밀착 결합 (Input Group) -->
+        <div class="filter-group" style="flex-grow:1; max-width:360px; display:flex; gap:0;">
+          <input type="text" id="filter_keyword" class="filter-input" style="border-top-right-radius:0; border-bottom-right-radius:0; border-right:none; width:100%;" placeholder="품목/부위/브랜드/BL/이력/거래처..." onkeypress="if(event.keyCode==13){loadData();}" />
+          <button class="btn btn-primary" style="border-top-left-radius:0; border-bottom-left-radius:0; padding:6px 14px;" onclick="loadData()"><i class="bi bi-search"></i> 조회</button>
         </div>
 
         <div style="display:flex; gap:6px;">
-          <button class="btn btn-primary" onclick="loadData()"><i class="bi bi-search"></i> 조회</button>
+          <button class="btn btn-outline" style="color:#16a34a; border-color:#86efac; background:#f0fdf4;" onclick="downloadCurrentTableExcel()"><i class="bi bi-file-earmark-spreadsheet-fill"></i> 엑셀 다운로드</button>
         </div>
 
         <div class="filter-btn-group">
@@ -1117,8 +1195,8 @@ HTML_PAGE = """<!DOCTYPE html>
     let currentMain = 'INBOUND', currentSub = 'IN_REQUEST';
     let partnerSubTab = 'ALL';
     let masterSubTab = 'ITEM_LIST';
+    let claimSubTab = 'ALL';
 
-    // 한국 표준시 기준 오늘(당일) 기본 세팅
     const nowKST = new Date();
     const todayStr = nowKST.toISOString().split('T')[0];
     document.getElementById('in_date').value = todayStr;
@@ -1199,6 +1277,16 @@ HTML_PAGE = """<!DOCTYPE html>
         document.getElementById('dateFilterLabel').innerHTML = '<i class="bi bi-calendar-range"></i> 출고 일자:';
         headerActions.innerHTML = '';
         renderSubTabs();
+      } else if (tab === 'CLAIM') {
+        pageTitle.innerText = '통합 클레임 관리 (입고 / 출고 구분)';
+        subTabs.style.display = 'flex';
+        dateCard.style.display = 'flex';
+        summaryBar.style.display = 'flex';
+        document.getElementById('dateFilterLabel').innerHTML = '<i class="bi bi-calendar-range"></i> 처리 일자:';
+        headerActions.innerHTML = '';
+        claimSubTab = 'ALL';
+        renderClaimSubTabs();
+        return;
       } else if (tab === 'PARTNER') {
         pageTitle.innerText = '거래처 정보 관리 (대분류 구분)';
         subTabs.style.display = 'flex';
@@ -1226,8 +1314,7 @@ HTML_PAGE = """<!DOCTYPE html>
         const steps = [
           {k:'IN_REQUEST', n:'1. 입고요청리스트'},
           {k:'IN_CONFIRM', n:'2. 입고확정리스트'},
-          {k:'IN_DONE', n:'3. 입고완료리스트'},
-          {k:'IN_CLAIM', n:'4. 입고클레임리스트'}
+          {k:'IN_DONE', n:'3. 입고완료리스트'}
         ];
         steps.forEach(s => {
           container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`;
@@ -1238,14 +1325,25 @@ HTML_PAGE = """<!DOCTYPE html>
           {k:'OUT_STOCK', n:'1. 출하요청리스트 (현 재고장)'},
           {k:'OUT_REQUEST', n:'2. 출고요청리스트'},
           {k:'OUT_CONFIRM', n:'3. 출고확정리스트'},
-          {k:'OUT_DONE', n:'4. 출고완료리스트'},
-          {k:'OUT_CLAIM', n:'5. 출고클레임리스트'}
+          {k:'OUT_DONE', n:'4. 출고완료리스트'}
         ];
         steps.forEach(s => {
           container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`;
         });
       }
     }
+
+    function renderClaimSubTabs() {
+      const container = document.getElementById('subTabs');
+      const tabs = [
+        {k:'ALL', n:'전체 클레임 리스트'},
+        {k:'INBOUND', n:'입고 클레임'},
+        {k:'OUTBOUND', n:'출고 클레임'}
+      ];
+      container.innerHTML = tabs.map(t => `<div class="sub-tab ${claimSubTab===t.k?'active':''}" onclick="setClaimSubTab('${t.k}')">${t.n}</div>`).join('');
+      loadData();
+    }
+    function setClaimSubTab(t) { claimSubTab = t; renderClaimSubTabs(); }
 
     function renderPartnerSubTabs() {
       const container = document.getElementById('subTabs');
@@ -1285,6 +1383,17 @@ HTML_PAGE = """<!DOCTYPE html>
       loadData();
     }
 
+    // 엑셀 다운로드 (SheetJS 기반)
+    function downloadCurrentTableExcel() {
+      const table = document.querySelector('.table-card table');
+      if (!table) return;
+      const cloneTable = table.cloneNode(true);
+      const wb = XLSX.utils.table_to_book(cloneTable, { sheet: "Sheet1" });
+      const tabName = currentMain === 'INBOUND' ? `입고_${currentSub}` : currentMain === 'OUTBOUND' ? `출고_${currentSub}` : currentMain === 'CLAIM' ? `클레임_${claimSubTab}` : currentMain;
+      const dateStr = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(wb, `MeatERP_${tabName}_${dateStr}.xlsx`);
+    }
+
     async function loadData() {
       const head = document.getElementById('tableHead'), body = document.getElementById('tableBody');
       const keyword = (document.getElementById('filter_keyword') ? document.getElementById('filter_keyword').value : '').toLowerCase().trim();
@@ -1305,53 +1414,28 @@ HTML_PAGE = """<!DOCTYPE html>
 
       // --- [1. 입고 관리 뷰] ---
       if (currentMain === 'INBOUND') {
-        // 클레임 탭일 때: 입고일자 & 처리일자 맨 앞 배치
-        if (currentSub === 'IN_CLAIM') {
-          head.innerHTML = `
-            <tr>
-              <th style="background:#fee2e2; color:#b91c1c;">입고일자</th>
-              <th style="background:#fee2e2; color:#b91c1c;">클레임 처리일자</th>
-              <th>전표번호</th>
-              <th>보관창고</th>
-              <th>매입처</th>
-              <th>B/L No.</th>
-              <th>이력번호</th>
-              <th>브랜드</th>
-              <th>품목명</th>
-              <th>부위명</th>
-              <th style="text-align:right;">박스</th>
-              <th style="text-align:right;">실중량(kg)</th>
-              <th style="text-align:right;">총 금액</th>
-              <th>클레임 상세 사유</th>
-              <th style="text-align:center;">상태 관리</th>
-              <th>GRID코드</th>
-            </tr>
-          `;
-        } else {
-          head.innerHTML = `
-            <tr>
-              <th>전표번호</th>
-              <th>입고일자</th>
-              <th>보관창고</th>
-              <th>매입처</th>
-              <th>B/L No.</th>
-              <th>이력번호</th>
-              <th>브랜드</th>
-              <th>품목명</th>
-              <th>부위명</th>
-              <th>보관</th>
-              <th style="text-align:center;">계근유무</th>
-              <th style="text-align:right;">박스</th>
-              <th style="text-align:right;">실중량(kg)</th>
-              <th style="text-align:right;">단가(kg)</th>
-              <th style="text-align:right;">총 매입금액</th>
-              <th>유통기한</th>
-              <th style="text-align:center;">작업 관리</th>
-              <th>GRID코드</th>
-            </tr>
-          `;
-        }
-
+        head.innerHTML = `
+          <tr>
+            <th>전표번호</th>
+            <th>입고일자</th>
+            <th>보관창고</th>
+            <th>매입처</th>
+            <th>B/L No.</th>
+            <th>이력번호</th>
+            <th>브랜드</th>
+            <th>품목명</th>
+            <th>부위명</th>
+            <th>보관</th>
+            <th style="text-align:center;">계근유무</th>
+            <th style="text-align:right;">박스</th>
+            <th style="text-align:right;">실중량(kg)</th>
+            <th style="text-align:right;">단가(kg)</th>
+            <th style="text-align:right;">총 매입금액</th>
+            <th>유통기한</th>
+            <th style="text-align:center;">작업 관리</th>
+            <th>GRID코드</th>
+          </tr>
+        `;
         const res = await fetch(`/api/inbounds?status=${currentSub}${dateQuery}`);
         let list = await res.json();
 
@@ -1396,40 +1480,11 @@ HTML_PAGE = """<!DOCTYPE html>
               <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('INBOUND', ${i.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
               <button class="btn btn-outline" style="color:#d97706;" onclick="revertIn(${i.id}, '이전 단계 반려')"><i class="bi bi-arrow-counterclockwise"></i> 반려</button>
             `;
-          } else if (currentSub === 'IN_DONE') {
+          } else {
             btns = `
               <span class="badge" style="background:#dcfce7; color:#15803d; margin-right:4px;">완료됨</span>
               <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('INBOUND', ${i.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
               <button class="btn btn-outline" style="color:#dc2626;" onclick="revertIn(${i.id}, '입고 취소 및 재고 원복')"><i class="bi bi-arrow-counterclockwise"></i> 작업취소</button>
-            `;
-          } else {
-            // IN_CLAIM
-            btns = `
-              <span class="badge" style="background:#fee2e2; color:#b91c1c; margin-right:4px;">클레임 처리됨</span>
-              <button class="btn btn-outline" style="color:#2563eb;" onclick="revertIn(${i.id}, '클레임 취소 및 입고완료 복구')"><i class="bi bi-arrow-counterclockwise"></i> 원복</button>
-            `;
-          }
-
-          if (currentSub === 'IN_CLAIM') {
-            return `
-              <tr>
-                <td style="background:#fff1f2; font-weight:bold;">${i.inbound_date}</td>
-                <td style="background:#fff1f2; font-weight:bold; color:#b91c1c;">${i.processed_date || '-'}</td>
-                <td><strong>${i.inbound_no}</strong></td>
-                <td><span class="badge badge-warehouse">${i.warehouse || '광주냉장창고'}</span></td>
-                <td>${i.vendor}</td>
-                <td><span class="bl-tag">${i.bl_no || '-'}</span></td>
-                <td><code>${i.trace_no}</code></td>
-                <td><span class="brand-tag">${i.brand || '-'}</span></td>
-                <td><span class="item-tag">${i.item_name}</span></td>
-                <td><strong>${i.cut_name}</strong></td>
-                <td style="text-align:right;"><strong>${i.box_qty}</strong> Box</td>
-                <td style="text-align:right;"><strong>${i.weight_kg.toLocaleString()}</strong> kg</td>
-                <td style="text-align:right;" class="amount-highlight">${i.total_amount.toLocaleString()}원</td>
-                <td style="color:#b91c1c; font-weight:600;">${i.claim_reason || '사유 미기재'}</td>
-                <td style="text-align:center; white-space:nowrap;">${btns}</td>
-                <td style="text-align:center;"><span class="grid-tag">${i.grid_no || '-'}</span></td>
-              </tr>
             `;
           }
 
@@ -1457,7 +1512,7 @@ HTML_PAGE = """<!DOCTYPE html>
               <td style="text-align:center;"><span class="grid-tag">${i.grid_no || '-'}</span></td>
             </tr>
           `;
-        }).join('') : '<tr><td colspan="18" style="text-align:center; padding:20px; color:#94a3b8;">조회된 전표가 없습니다.</td></tr>';
+        }).join('') : '<tr><td colspan="18" style="text-align:center; padding:20px; color:#94a3b8;">조회된 입고 전표가 없습니다.</td></tr>';
 
       // --- [2. 현 재고장 & 출고 관리] ---
       } else if (currentMain === 'OUTBOUND') {
@@ -1535,79 +1590,7 @@ HTML_PAGE = """<!DOCTYPE html>
               </tr>
             `;
           }).join('') : '<tr><td colspan="15" style="text-align:center; padding:20px; color:#94a3b8;">보유 재고가 없습니다.</td></tr>';
-        } else if (currentSub === 'OUT_CLAIM') {
-          // 출고 클레임 뷰
-          head.innerHTML = `
-            <tr>
-              <th style="background:#fee2e2; color:#b91c1c;">입고일자</th>
-              <th style="background:#fee2e2; color:#b91c1c;">클레임 처리일자</th>
-              <th>출고번호</th>
-              <th>매출처</th>
-              <th>보관창고</th>
-              <th>B/L No.</th>
-              <th>이력번호</th>
-              <th>브랜드</th>
-              <th>품목/부위</th>
-              <th style="text-align:right;">출고 박스</th>
-              <th style="text-align:right;">출고 중량(kg)</th>
-              <th style="text-align:right;">총 금액</th>
-              <th>클레임 상세 사유</th>
-              <th style="text-align:center;">상태 관리</th>
-              <th>GRID코드</th>
-            </tr>
-          `;
-          const res = await fetch(`/api/outbounds?status=${currentSub}${dateQuery}`);
-          let list = await res.json();
-
-          if (keyword) {
-            list = list.filter(o => 
-              (o.item_name && o.item_name.toLowerCase().includes(keyword)) ||
-              (o.cut_name && o.cut_name.toLowerCase().includes(keyword)) ||
-              (o.customer && o.customer.toLowerCase().includes(keyword)) ||
-              (o.brand && o.brand.toLowerCase().includes(keyword)) ||
-              (o.bl_no && o.bl_no.toLowerCase().includes(keyword)) ||
-              (o.trace_no && o.trace_no.toLowerCase().includes(keyword)) ||
-              (o.warehouse && o.warehouse.toLowerCase().includes(keyword)) ||
-              (o.grid_no && o.grid_no.toLowerCase().includes(keyword))
-            );
-          }
-
-          let sumBox = 0, sumWeight = 0.0, sumAmount = 0;
-          list.forEach(o => {
-            sumBox += o.box_qty;
-            sumWeight += o.weight_kg;
-            sumAmount += o.total_amount;
-          });
-
-          document.getElementById('sum_count').innerText = list.length.toLocaleString();
-          document.getElementById('sum_box').innerText = sumBox.toLocaleString();
-          document.getElementById('sum_weight').innerText = sumWeight.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
-          document.getElementById('sum_amount').innerText = Math.round(sumAmount).toLocaleString();
-
-          body.innerHTML = list.length ? list.map(o => `
-            <tr>
-              <td style="background:#fff1f2; font-weight:bold;">${o.inbound_date || '-'}</td>
-              <td style="background:#fff1f2; font-weight:bold; color:#b91c1c;">${o.processed_date || o.outbound_date}</td>
-              <td><strong>${o.outbound_no}</strong></td>
-              <td><strong>${o.customer}</strong></td>
-              <td><span class="badge badge-warehouse">${o.warehouse || '광주냉장창고'}</span></td>
-              <td><span class="bl-tag">${o.bl_no || '-'}</span></td>
-              <td><code>${o.trace_no}</code></td>
-              <td><span class="brand-tag">${o.brand || '-'}</span></td>
-              <td><span class="item-tag">${o.item_name}</span> <strong>${o.cut_name}</strong></td>
-              <td style="text-align:right;"><strong>${o.box_qty}</strong> Box</td>
-              <td style="text-align:right;"><strong>${o.weight_kg.toLocaleString()}</strong> kg</td>
-              <td style="text-align:right;" class="amount-highlight">${o.total_amount.toLocaleString()}원</td>
-              <td style="color:#b91c1c; font-weight:600;">${o.claim_reason || '사유 미기재'}</td>
-              <td style="text-align:center; white-space:nowrap;">
-                <span class="badge" style="background:#fee2e2; color:#b91c1c; margin-right:4px;">클레임 처리됨</span>
-                <button class="btn btn-outline" style="color:#2563eb;" onclick="revertOut(${o.id}, '클레임 취소 및 출고완료 복구')"><i class="bi bi-arrow-counterclockwise"></i> 원복</button>
-              </td>
-              <td style="text-align:center;"><span class="grid-tag">${o.grid_no || '-'}</span></td>
-            </tr>
-          `).join('') : '<tr><td colspan="15" style="text-align:center; padding:20px; color:#94a3b8;">조회된 출고 클레임 내역이 없습니다.</td></tr>';
         } else {
-          // 출고요청, 출고확정, 출고완료
           head.innerHTML = `
             <tr>
               <th>출고번호</th>
@@ -1710,7 +1693,87 @@ HTML_PAGE = """<!DOCTYPE html>
           }).join('') : '<tr><td colspan="17" style="text-align:center; padding:20px; color:#94a3b8;">대기 중인 출고 건이 없습니다.</td></tr>';
         }
 
-      // --- [3. 거래처 마스터] ---
+      // --- [3. 통합 클레임 관리 뷰] ---
+      } else if (currentMain === 'CLAIM') {
+        head.innerHTML = `
+          <tr>
+            <th style="background:#fef2f2; color:#b91c1c; text-align:center;">발생시점</th>
+            <th style="background:#fef2f2; color:#b91c1c;">입고일자</th>
+            <th style="background:#fef2f2; color:#b91c1c;">클레임 처리일자</th>
+            <th>전표번호</th>
+            <th>거래처 (매입/매출처)</th>
+            <th>보관창고</th>
+            <th>B/L No.</th>
+            <th>이력번호</th>
+            <th>브랜드</th>
+            <th>품목/부위</th>
+            <th style="text-align:right;">박스</th>
+            <th style="text-align:right;">실중량(kg)</th>
+            <th style="text-align:right;">총 금액</th>
+            <th>클레임 상세 사유</th>
+            <th style="text-align:center;">상태 관리</th>
+            <th>GRID코드</th>
+          </tr>
+        `;
+        const res = await fetch(`/api/claims?stage=${claimSubTab}${dateQuery}`);
+        let list = await res.json();
+
+        if (keyword) {
+          list = list.filter(c => 
+            (c.item_name && c.item_name.toLowerCase().includes(keyword)) ||
+            (c.cut_name && c.cut_name.toLowerCase().includes(keyword)) ||
+            (c.partner_name && c.partner_name.toLowerCase().includes(keyword)) ||
+            (c.brand && c.brand.toLowerCase().includes(keyword)) ||
+            (c.bl_no && c.bl_no.toLowerCase().includes(keyword)) ||
+            (c.trace_no && c.trace_no.toLowerCase().includes(keyword)) ||
+            (c.warehouse && c.warehouse.toLowerCase().includes(keyword)) ||
+            (c.grid_no && c.grid_no.toLowerCase().includes(keyword)) ||
+            (c.claim_reason && c.claim_reason.toLowerCase().includes(keyword))
+          );
+        }
+
+        let sumBox = 0, sumWeight = 0.0, sumAmount = 0;
+        list.forEach(c => {
+          sumBox += c.box_qty;
+          sumWeight += c.weight_kg;
+          sumAmount += c.total_amount;
+        });
+
+        document.getElementById('sum_count').innerText = list.length.toLocaleString();
+        document.getElementById('sum_box').innerText = sumBox.toLocaleString();
+        document.getElementById('sum_weight').innerText = sumWeight.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
+        document.getElementById('sum_amount').innerText = Math.round(sumAmount).toLocaleString();
+
+        body.innerHTML = list.length ? list.map(c => {
+          const revertFn = c.raw_type === 'INBOUND' ? `revertIn(${c.id}, '클레임 취소 및 입고완료 복구')` : `revertOut(${c.id}, '클레임 취소 및 출고완료 복구')`;
+          const stageBadge = c.stage === '입고' ? `<span class="badge badge-stage-in"><i class="bi bi-box-arrow-in-down"></i> 입고</span>` : `<span class="badge badge-stage-out"><i class="bi bi-box-arrow-up"></i> 출고</span>`;
+
+          return `
+            <tr>
+              <td style="text-align:center;">${stageBadge}</td>
+              <td style="background:#fff1f2; font-weight:bold;">${c.inbound_date}</td>
+              <td style="background:#fff1f2; font-weight:bold; color:#b91c1c;">${c.processed_date}</td>
+              <td><strong>${c.doc_no}</strong></td>
+              <td><strong>${c.partner_name}</strong></td>
+              <td><span class="badge badge-warehouse">${c.warehouse || '광주냉장창고'}</span></td>
+              <td><span class="bl-tag">${c.bl_no || '-'}</span></td>
+              <td><code>${c.trace_no}</code></td>
+              <td><span class="brand-tag">${c.brand || '-'}</span></td>
+              <td><span class="item-tag">${c.item_name}</span> <strong>${c.cut_name}</strong></td>
+              <td style="text-align:right;"><strong>${c.box_qty}</strong> Box</td>
+              <td style="text-align:right;"><strong>${c.weight_kg.toLocaleString()}</strong> kg</td>
+              <td style="text-align:right;" class="amount-highlight">${c.total_amount.toLocaleString()}원</td>
+              <td style="color:#b91c1c; font-weight:600;">${c.claim_reason || '사유 미기재'}</td>
+              <td style="text-align:center; white-space:nowrap;">
+                <span class="badge" style="background:#fee2e2; color:#b91c1c; margin-right:4px;">클레임 처리됨</span>
+                <button class="btn btn-outline" style="color:#2563eb;" onclick="${revertFn}"><i class="bi bi-arrow-counterclockwise"></i> 원복</button>
+              </td>
+              <td style="text-align:center;"><span class="grid-tag">${c.grid_no || '-'}</span></td>
+            </tr>
+          `;
+        }).join('') : '<tr><td colspan="16" style="text-align:center; padding:20px; color:#94a3b8;">등록된 클레임 내역이 없습니다.</td></tr>';
+
+      // --- [4. 거래처 마스터] ---
       } else if (currentMain === 'PARTNER') {
         head.innerHTML = '<tr><th>ID</th><th>대분류 구분</th><th>상호명</th><th>사업자번호</th><th>담당자</th><th>연락처</th><th>사업장/창고 주소</th><th style="text-align:center;">관리</th></tr>';
         const typeQuery = partnerSubTab === 'ALL' ? '' : `?type=${partnerSubTab}`;
@@ -1736,7 +1799,7 @@ HTML_PAGE = """<!DOCTYPE html>
           `;
         }).join('') : '<tr><td colspan="8" style="text-align:center; padding:20px; color:#94a3b8;">해당 분류의 거래처가 없습니다.</td></tr>';
 
-      // --- [4. 품목/부위 마스터] ---
+      // --- [5. 품목/부위 마스터] ---
       } else if (currentMain === 'ITEM_CUT_MASTER') {
         if (masterSubTab === 'ITEM_LIST') {
           head.innerHTML = '<tr><th>품목 ID</th><th>품목코드</th><th>품목명 (대분류)</th><th>축종</th><th style="text-align:center;">관리</th></tr>';
@@ -1773,7 +1836,6 @@ HTML_PAGE = """<!DOCTYPE html>
     async function revertIn(id, msg) { if(!confirm(`정말 [${msg}] 작업을 진행하시겠습니까?`)) return; const r = await fetch(`/api/inbounds/${id}/revert`,{method:'POST'}); const d = await r.json(); alert(d.message); loadData(); }
     async function revertOut(id, msg) { if(!confirm(`정말 [${msg}] 작업을 진행하시겠습니까?`)) return; const r = await fetch(`/api/outbounds/${id}/revert`,{method:'POST'}); const d = await r.json(); alert(d.message); loadData(); }
 
-    // 클레임 등록 모달
     function openClaimModal(type, id) {
       document.getElementById('claim_type').value = type;
       document.getElementById('claim_id').value = id;
