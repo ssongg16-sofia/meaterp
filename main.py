@@ -51,7 +51,7 @@ class ItemMaster(Base):
     id = Column(Integer, primary_key=True, index=True)
     item_code = Column(String(50), unique=True, nullable=False)
     item_name = Column(String(100), nullable=False)
-    species = Column(String(30), nullable=False)
+    species = Column(String(30), nullable=False)  # 돼지, 소, 닭 등
     created_at = Column(DateTime, default=datetime.now)
 
 class CutMaster(Base):
@@ -68,7 +68,7 @@ class InboundRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     inbound_no = Column(String(50), unique=True, index=True)
     inbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
-    processed_date = Column(String(20), nullable=True) # 클레임/처리일자
+    processed_date = Column(String(20), nullable=True)
     vendor = Column(String(100), nullable=False)
     bl_no = Column(String(50), nullable=True)
     trace_no = Column(String(50), nullable=False, index=True)
@@ -81,10 +81,10 @@ class InboundRecord(Base):
     cost_per_kg = Column(Float, nullable=False)
     total_amount = Column(Float, nullable=False)
     warehouse = Column(String(50), default="광주냉장창고")
-    exp_date = Column(String(20), nullable=False)
-    is_weighed = Column(String(10), default="Y")
+    exp_date = Column(String(20), nullable=False)      # 소비기한
+    is_weighed = Column(String(10), default="N")       # Y: 비규격(계근요청), N: 규격(계근미요청)
     claim_reason = Column(String(255), nullable=True)
-    status = Column(String(20), default="IN_REQUEST") # IN_REQUEST, IN_CONFIRM, IN_DONE, IN_CLAIM
+    status = Column(String(20), default="IN_REQUEST")
     grid_no = Column(String(50), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -106,8 +106,8 @@ class InventoryLot(Base):
     current_weight_kg = Column(Float, nullable=False)
     cost_per_kg = Column(Float, nullable=False)
     warehouse = Column(String(50), nullable=False)
-    exp_date = Column(String(20), nullable=False)
-    is_weighed = Column(String(10), default="Y")
+    exp_date = Column(String(20), nullable=False)      # 소비기한
+    is_weighed = Column(String(10), default="N")       # Y: 비규격(계근요청), N: 규격(계근미요청)
     grid_no = Column(String(50), nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -117,7 +117,7 @@ class OutboundRecord(Base):
     outbound_no = Column(String(50), unique=True, index=True)
     inbound_date = Column(String(20), nullable=True)
     outbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
-    processed_date = Column(String(20), nullable=True) # 클레임/처리일자
+    processed_date = Column(String(20), nullable=True)
     lot_id = Column(Integer, nullable=False)
     customer = Column(String(100), nullable=False)
     bl_no = Column(String(50), nullable=True)
@@ -131,11 +131,11 @@ class OutboundRecord(Base):
     weight_kg = Column(Float, nullable=False)
     unit_price_kg = Column(Float, nullable=False)
     total_amount = Column(Float, nullable=False)
-    exp_date = Column(String(20), nullable=False)
+    exp_date = Column(String(20), nullable=False)      # 소비기한
     warehouse = Column(String(50), nullable=False)
-    is_weighed = Column(String(10), default="Y")
+    is_weighed = Column(String(10), default="N")       # Y: 비규격(계근요청), N: 규격(계근미요청)
     claim_reason = Column(String(255), nullable=True)
-    status = Column(String(20), default="OUT_REQUEST") # OUT_REQUEST, OUT_CONFIRM, OUT_DONE, OUT_CLAIM
+    status = Column(String(20), default="OUT_REQUEST")
     grid_no = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -162,6 +162,7 @@ def init_sample_data():
             Partner(name="(주)글로벌미트", type="VENDOR", biz_no="105-86-12345", contact_person="김수입", phone="010-1111-2222", address="서울시 송파구"),
             Partner(name="(주)하남돼지집", type="CUSTOMER", biz_no="120-81-99887", contact_person="박대표", phone="010-5555-6666", address="경기도 하남시 신장동 123"),
             Partner(name="광주냉장창고", type="WAREHOUSE", biz_no="110-85-44332", contact_person="최창고", phone="031-760-1234", address="경기도 광주시 초월읍"),
+            Partner(name="용인냉동센터", type="WAREHOUSE", biz_no="142-88-55667", contact_person="정소장", phone="031-330-5678", address="경기도 용인시 처인구"),
             Partner(name="머스크라인(Maersk)", type="SHIPPING", biz_no="101-81-33221", contact_person="선사팀", phone="02-3700-5000", address="서울시 중구"),
             Partner(name="SGS 한국시험연구원", type="ETC", biz_no="113-81-77889", contact_person="인증실", phone="031-428-5700", address="경기도 안양시")
         ]
@@ -182,8 +183,8 @@ def init_sample_data():
 
     if db.query(InventoryLot).count() == 0:
         lots = [
-            InventoryLot(grid_no="GRID-738201", sku_code="PK-CAN-01", inbound_date="2026-08-10", bl_no="ONEYVAN6948200", trace_no="802410290114", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장", initial_box_qty=50, initial_weight_kg=1020.5, avg_box_weight=20.41, current_box_qty=45, current_weight_kg=918.45, cost_per_kg=8400, warehouse="광주냉장창고", exp_date="2026-09-02", is_weighed="Y"),
-            InventoryLot(grid_no="GRID-910482", sku_code="BF-USA-05", inbound_date="2026-08-12", bl_no="MAEU9201948201", trace_no="100392019482", brand="엑셀", item_name="우육(소)", cut_name="척아이롤", storage_type="냉동", initial_box_qty=150, initial_weight_kg=3050.0, avg_box_weight=20.33, current_box_qty=120, current_weight_kg=2439.6, cost_per_kg=14500, warehouse="용인냉동센터", exp_date="2027-04-15", is_weighed="N")
+            InventoryLot(grid_no="GRID-738201", sku_code="PK-CAN-01", inbound_date="2026-08-10", bl_no="ONEYVAN6948200", trace_no="802410290114", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장", initial_box_qty=50, initial_weight_kg=1020.5, avg_box_weight=20.41, current_box_qty=45, current_weight_kg=918.45, cost_per_kg=8400, warehouse="광주냉장창고", exp_date="2026-09-24", is_weighed="N"),
+            InventoryLot(grid_no="GRID-910482", sku_code="BF-USA-05", inbound_date="2026-08-12", bl_no="MAEU9201948201", trace_no="100392019482", brand="엑셀", item_name="우육(소)", cut_name="척아이롤", storage_type="냉동", initial_box_qty=150, initial_weight_kg=3050.0, avg_box_weight=20.33, current_box_qty=120, current_weight_kg=2439.6, cost_per_kg=14500, warehouse="용인냉동센터", exp_date="2028-08-11", is_weighed="Y")
         ]
         db.add_all(lots)
     db.commit()
@@ -229,7 +230,7 @@ class InboundCreate(BaseModel):
     cost_per_kg: float
     warehouse: str
     exp_date: str
-    is_weighed: Optional[str] = "Y"
+    is_weighed: Optional[str] = "N"
 
 class UpdateInbound(BaseModel):
     inbound_date: str
@@ -242,6 +243,7 @@ class UpdateInbound(BaseModel):
     cost_per_kg: float
     warehouse: str
     is_weighed: str
+    exp_date: str
 
 class ClaimRegister(BaseModel):
     reason: str
@@ -405,7 +407,7 @@ def toggle_inbound_weigh(inbound_id: int, db: Session = Depends(get_db)):
     if not inbound: raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
     inbound.is_weighed = "N" if inbound.is_weighed == "Y" else "Y"
     db.commit()
-    return {"message": "입고 계근 상태 변경 완료", "is_weighed": inbound.is_weighed}
+    return {"message": "입고 계근/규격 상태 변경 완료", "is_weighed": inbound.is_weighed}
 
 @app.put("/api/inbounds/{inbound_id}")
 def update_inbound(inbound_id: int, req: UpdateInbound, db: Session = Depends(get_db)):
@@ -423,6 +425,7 @@ def update_inbound(inbound_id: int, req: UpdateInbound, db: Session = Depends(ge
     inbound.cost_per_kg = req.cost_per_kg
     inbound.warehouse = req.warehouse
     inbound.is_weighed = req.is_weighed
+    inbound.exp_date = req.exp_date
     inbound.total_amount = round(req.weight_kg * req.cost_per_kg)
     db.commit()
     return {"message": "입고 정보가 수정되었습니다."}
@@ -527,7 +530,7 @@ async def upload_inbound_excel(file: UploadFile = File(...), db: Session = Depen
             warehouse = str(row[11]).strip() if len(row) > 11 and row[11] else "광주냉장창고"
             exp_date_raw = row[12] if len(row) > 12 else "2026-12-31"
             exp_date_str = exp_date_raw.strftime('%Y-%m-%d') if isinstance(exp_date_raw, (datetime, date)) else str(exp_date_raw).strip()
-            is_weighed = str(row[13]).strip() if len(row) > 13 and row[13] else "Y"
+            is_weighed = str(row[13]).strip() if len(row) > 13 and row[13] else "N"
 
             inbound_no = f"IN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{count+1}"
             grid_no = generate_random_grid()
@@ -557,7 +560,7 @@ def toggle_inventory_weigh(lot_id: int, db: Session = Depends(get_db)):
     if not lot: raise HTTPException(status_code=404, detail="재고 로트를 찾을 수 없습니다.")
     lot.is_weighed = "N" if lot.is_weighed == "Y" else "Y"
     db.commit()
-    return {"message": "재고 계근 상태 변경 완료", "is_weighed": lot.is_weighed}
+    return {"message": "재고 계근/규격 상태 변경 완료", "is_weighed": lot.is_weighed}
 
 @app.get("/api/outbounds")
 def get_outbounds(
@@ -584,7 +587,7 @@ def toggle_outbound_weigh(outbound_id: int, db: Session = Depends(get_db)):
     if not outbound: raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
     outbound.is_weighed = "N" if outbound.is_weighed == "Y" else "Y"
     db.commit()
-    return {"message": "출고 계근 상태 변경 완료", "is_weighed": outbound.is_weighed}
+    return {"message": "출고 계근/규격 상태 변경 완료", "is_weighed": outbound.is_weighed}
 
 @app.post("/api/outbounds/create-from-stock")
 def create_outbound_from_stock(req: OutboundCreate, db: Session = Depends(get_db)):
@@ -690,10 +693,10 @@ def advance_outbound(outbound_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": msg}
 
-# --- [통합 클레임 관리 API] ---
+# 통합 클레임 관리 API
 @app.get("/api/claims")
 def get_claims(
-    stage: Optional[str] = None, # ALL, INBOUND, OUTBOUND
+    stage: Optional[str] = None,
     target_date: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -775,7 +778,7 @@ def adjust_stock(req: AdjustCreate, db: Session = Depends(get_db)):
     return {"message": f"재고 조정({req.adj_type})이 완료되었습니다."}
 
 # -----------------------------------------------------------------------------
-# 4. 프론트엔드 UI
+# 4. 프론트엔드 UI (HTML/CSS/JS)
 # -----------------------------------------------------------------------------
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="ko">
@@ -836,6 +839,8 @@ HTML_PAGE = """<!DOCTYPE html>
     .badge-warehouse { background: #f1f5f9; color: #475569; }
     .badge-shipping { background: #ede9fe; color: #6d28d9; }
     .badge-etc { background: #f3f4f6; color: #374151; }
+    .badge-weighed { background: #fee2e2; color: #b91c1c; font-weight:700; } /* 비규격 (계근요청) */
+    .badge-unweighed { background: #f1f5f9; color: #475569; } /* 규격 (미요청) */
     .badge-stage-in { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
     .badge-stage-out { background: #fae8ff; color: #86198f; border: 1px solid #f5d0fe; }
     .grid-tag { background: #312e81; color: #e0e7ff; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: monospace; font-size: 0.78rem; }
@@ -886,10 +891,10 @@ HTML_PAGE = """<!DOCTYPE html>
           <input type="date" id="filter_end" class="filter-input" />
         </div>
         
-        <!-- 검색창과 [조회] 버튼 밀착 결합 (Input Group) -->
-        <div class="filter-group" style="flex-grow:1; max-width:360px; display:flex; gap:0;">
-          <input type="text" id="filter_keyword" class="filter-input" style="border-top-right-radius:0; border-bottom-right-radius:0; border-right:none; width:100%;" placeholder="품목/부위/브랜드/BL/이력/거래처..." onkeypress="if(event.keyCode==13){loadData();}" />
-          <button class="btn btn-primary" style="border-top-left-radius:0; border-bottom-left-radius:0; padding:6px 14px;" onclick="loadData()"><i class="bi bi-search"></i> 조회</button>
+        <!-- 검색창과 [조회] 버튼 사이 적절한 6px 간격 배치 & 다중조건(AND/OR/IN) 지원 -->
+        <div class="filter-group" style="flex-grow:1; max-width:380px; display:flex; gap:6px;">
+          <input type="text" id="filter_keyword" class="filter-input" style="width:100%; border-radius:6px;" placeholder="다중검색 (예: 삼겹살 AND 냉장, 광주 OR 용인, 삼겹, 목심)..." onkeypress="if(event.keyCode==13){loadData();}" />
+          <button class="btn btn-primary" style="border-radius:6px; padding:6px 14px; white-space:nowrap;" onclick="loadData()"><i class="bi bi-search"></i> 조회</button>
         </div>
 
         <div style="display:flex; gap:6px;">
@@ -926,12 +931,12 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </main>
 
-  <!-- 1. 입고 등록 모달 -->
+  <!-- 1. 신규 입고등록 모달 (등록된 창고 드롭다운 선택, 소비기한 자동계산) -->
   <div class="modal-overlay" id="inboundModal">
     <div class="modal-box">
-      <h3 style="margin-bottom:14px;">신규 축산물 입고요청 등록</h3>
+      <h3 style="margin-bottom:14px;">신규 입고등록</h3>
       <div style="display:flex; gap:10px;">
-        <div class="form-group" style="flex:1;"><label>입고 일자 (KST 기준)</label><input type="date" id="in_date" class="form-control" /></div>
+        <div class="form-group" style="flex:1;"><label>입고 일자 (KST 기준)</label><input type="date" id="in_date" class="form-control" onchange="autoCalculateExpDate()" /></div>
         <div class="form-group" style="flex:1;"><label>매입처 상호</label><input type="text" id="in_vendor" class="form-control" value="(주)글로벌미트" /></div>
       </div>
       <div style="display:flex; gap:10px;">
@@ -940,11 +945,25 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
       <div style="display:flex; gap:10px;">
         <div class="form-group" style="flex:1;"><label>브랜드 / 가공장</label><input type="text" id="in_brand" class="form-control" value="올리멜" /></div>
-        <div class="form-group" style="flex:1;"><label>상위 품목명</label><input type="text" id="in_item" class="form-control" value="돈육(돼지)" /></div>
+        <div class="form-group" style="flex:1;">
+          <label>상위 품목명 (축종)</label>
+          <select id="in_item" class="form-control" onchange="autoCalculateExpDate()">
+            <option value="돈육(돼지)">돈육(돼지)</option>
+            <option value="우육(소)">우육(소)</option>
+            <option value="계육(닭)">계육(닭)</option>
+            <option value="기타축산물">기타축산물</option>
+          </select>
+        </div>
       </div>
       <div style="display:flex; gap:10px;">
         <div class="form-group" style="flex:1;"><label>세부 부위명</label><input type="text" id="in_cut" class="form-control" value="삼겹살" /></div>
-        <div class="form-group" style="flex:1;"><label>보관 형태</label><select id="in_storage" class="form-control"><option value="냉장">냉장</option><option value="냉동">냉동</option></select></div>
+        <div class="form-group" style="flex:1;">
+          <label>보관 형태</label>
+          <select id="in_storage" class="form-control" onchange="autoCalculateExpDate()">
+            <option value="냉장">냉장 (Chilled)</option>
+            <option value="냉동">냉동 (Frozen)</option>
+          </select>
+        </div>
       </div>
       <div style="display:flex; gap:10px;">
         <div class="form-group" style="flex:1;"><label>입고 박스 수(Box)</label><input type="number" id="in_box" class="form-control" value="50" /></div>
@@ -952,15 +971,24 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
       <div style="display:flex; gap:10px;">
         <div class="form-group" style="flex:1;"><label>매입단가(원/kg)</label><input type="number" id="in_cost" class="form-control" value="8400" /></div>
-        <div class="form-group" style="flex:1;"><label>보관창고</label><input type="text" id="in_warehouse" class="form-control" value="광주냉장창고" /></div>
+        <div class="form-group" style="flex:1;">
+          <label>보관창고 (거래처 등록 창고 선택)</label>
+          <select id="in_warehouse" class="form-control"></select>
+        </div>
       </div>
       <div style="display:flex; gap:10px;">
-        <div class="form-group" style="flex:1;"><label>유통기한</label><input type="date" id="in_exp" class="form-control" value="2026-09-15" /></div>
-        <div class="form-group" style="flex:1;"><label>계근 유무</label><select id="in_is_weighed" class="form-control"><option value="Y">계근완료 (Y)</option><option value="N">미계근 (N)</option></select></div>
+        <div class="form-group" style="flex:1;"><label>소비기한 (축종/보관형태 자동산출)</label><input type="date" id="in_exp" class="form-control" /></div>
+        <div class="form-group" style="flex:1;">
+          <label>규격 / 계근구분</label>
+          <select id="in_is_weighed" class="form-control">
+            <option value="N">규격 (계근 미요청)</option>
+            <option value="Y">비규격 (계근 요청)</option>
+          </select>
+        </div>
       </div>
       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
         <button class="btn btn-outline" onclick="closeModal('inboundModal')">취소</button>
-        <button class="btn btn-primary" onclick="submitInbound()">입고요청 저장</button>
+        <button class="btn btn-primary" onclick="submitInbound()">신규 입고등록 완료</button>
       </div>
     </div>
   </div>
@@ -1021,7 +1049,7 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 5. 출고요청서 팩스/PDF 미리보기 및 인쇄 모달 -->
+  <!-- 5. 출고요청서 팩스/PDF 미리보기 모달 -->
   <div class="modal-overlay" id="pdfModal">
     <div class="modal-box" style="width:780px;">
       <div class="no-print" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid #e2e8f0; padding-bottom:10px;">
@@ -1053,8 +1081,8 @@ HTML_PAGE = """<!DOCTYPE html>
           <tr>
             <td style="background:#f2f2f2; font-weight:bold; border:1px solid #000; padding:6px;">전표 관리번호</td>
             <td style="border:1px solid #000; padding:6px;" id="pdf_out_no">OUT-20260820-001</td>
-            <td style="background:#f2f2f2; font-weight:bold; border:1px solid #000; padding:6px;">배차 및 계근</td>
-            <td style="border:1px solid #000; padding:6px;" id="pdf_weighed">실계근 상차 요청</td>
+            <td style="background:#f2f2f2; font-weight:bold; border:1px solid #000; padding:6px;">계근 구분</td>
+            <td style="border:1px solid #000; padding:6px;" id="pdf_weighed">규격 / 계근미요청</td>
           </tr>
         </table>
 
@@ -1069,7 +1097,7 @@ HTML_PAGE = """<!DOCTYPE html>
               <th style="border:1px solid #000; padding:6px;">기준평중</th>
               <th style="border:1px solid #000; padding:6px;">출하 박스</th>
               <th style="border:1px solid #000; padding:6px;">출하 실중량(kg)</th>
-              <th style="border:1px solid #000; padding:6px;">유통기한</th>
+              <th style="border:1px solid #000; padding:6px;">소비기한</th>
               <th style="border:1px solid #000; padding:6px;">GRID 매칭코드</th>
             </tr>
           </thead>
@@ -1091,7 +1119,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <div style="border:1px solid #000; padding:12px; margin-bottom:30px;">
           <strong>[출하 시 주의사항]</strong><br/>
           1. 상기 지정된 이력번호 및 B/L No., GRID 번호의 재고 로트에서 정확히 피킹하여 상차 바랍니다.<br/>
-          2. 상차 완료 즉시 계근표 및 인수증을 본사 FAX 또는 전산으로 회신 부탁드립니다.<br/>
+          2. 비규격(계근요청) 품목의 경우 상차 즉시 계근표를 본사 FAX 또는 전산으로 회신 부탁드립니다.<br/>
           3. 냉장/냉동 탑차 온도(-18℃ 이하 / 냉장 0~2℃) 확인 후 상차 요망.
         </div>
 
@@ -1119,7 +1147,7 @@ HTML_PAGE = """<!DOCTYPE html>
           <option value="표면 갈변 발생 및 변질">표면 갈변 발생 및 변질</option>
           <option value="중량 부족 / 감량 오차">중량 부족 / 감량 오차</option>
           <option value="포장 파손 및 진공 풀림">포장 파손 및 진공 풀림</option>
-          <option value="유통기한 경과 / 임박 반품">유통기한 경과 / 임박 반품</option>
+          <option value="소비기한 경과 / 임박 반품">소비기한 경과 / 임박 반품</option>
           <option value="직접입력">직접입력</option>
         </select>
       </div>
@@ -1149,9 +1177,12 @@ HTML_PAGE = """<!DOCTYPE html>
         </div>
         <div style="display:flex; gap:10px;">
           <div class="form-group" style="flex:1;"><label>부위명</label><input type="text" id="edit_cut_name" class="form-control" /></div>
-          <div class="form-group" style="flex:1;"><label>보관창고</label><input type="text" id="edit_warehouse" class="form-control" /></div>
+          <div class="form-group" style="flex:1;"><label>보관창고</label><select id="edit_warehouse" class="form-control"></select></div>
         </div>
-        <div class="form-group"><label>계근 유무</label><select id="edit_is_weighed" class="form-control"><option value="Y">계근완료 (Y)</option><option value="N">미계근 (N)</option></select></div>
+        <div style="display:flex; gap:10px;">
+          <div class="form-group" style="flex:1;"><label>소비기한</label><input type="date" id="edit_exp_date" class="form-control" /></div>
+          <div class="form-group" style="flex:1;"><label>규격 / 계근구분</label><select id="edit_is_weighed" class="form-control"><option value="N">규격 (계근 미요청)</option><option value="Y">비규격 (계근 요청)</option></select></div>
+        </div>
       </div>
       <div style="display:flex; gap:10px;">
         <div class="form-group" style="flex:1;"><label>박스 수량(Box)</label><input type="number" id="edit_box" class="form-control" /></div>
@@ -1205,6 +1236,76 @@ HTML_PAGE = """<!DOCTYPE html>
     let activeMonthFilter = null;
     document.getElementById('filter_start').value = todayStr;
     document.getElementById('filter_end').value = todayStr;
+
+    // 축종 및 보관상태(냉장/냉동)에 따른 소비기한 자동 계산 함수
+    function autoCalculateExpDate() {
+      const inDateVal = document.getElementById('in_date').value || todayStr;
+      const storage = document.getElementById('in_storage').value;
+      const item = document.getElementById('in_item').value;
+
+      const baseDate = new Date(inDateVal);
+      if (isNaN(baseDate.getTime())) return;
+
+      let addDays = 30; // 기본 냉장 30일
+      if (storage === '냉동') {
+        addDays = 730; // 냉동 2년
+      } else {
+        if (item.includes('돈육') || item.includes('돼지')) {
+          addDays = 45; // 냉장 돈육 45일
+        } else if (item.includes('우육') || item.includes('소')) {
+          addDays = 60; // 냉장 우육 60일
+        } else if (item.includes('계육') || item.includes('닭')) {
+          addDays = 15; // 냉장 계육 15일
+        }
+      }
+
+      baseDate.setDate(baseDate.getDate() + addDays);
+      document.getElementById('in_exp').value = baseDate.toISOString().split('T')[0];
+    }
+
+    // 등록된 보관창고 목록 불러와서 <select>에 바인딩
+    async function loadWarehouseOptions() {
+      try {
+        const res = await fetch('/api/partners?type=WAREHOUSE');
+        const list = await res.json();
+        const select = document.getElementById('in_warehouse');
+        const editSelect = document.getElementById('edit_warehouse');
+        
+        let html = '';
+        if (list.length > 0) {
+          html = list.map(w => `<option value="${w.name}">${w.name}</option>`).join('');
+        } else {
+          html = '<option value="광주냉장창고">광주냉장창고 (기본)</option>';
+        }
+        if (select) select.innerHTML = html;
+        if (editSelect) editSelect.innerHTML = html;
+      } catch (e) {
+        console.error("창고 목록 로드 실패", e);
+      }
+    }
+
+    // 다중조건 검색 파서 (AND, OR, IN/콤마 지원)
+    function evaluateMultiCondition(targetStr, rawQuery) {
+      if (!rawQuery) return true;
+      targetStr = (targetStr || '').toLowerCase();
+      rawQuery = rawQuery.trim().toLowerCase();
+
+      // OR 조건 (예: '삼겹살 OR 목심')
+      if (rawQuery.includes(' or ')) {
+        const orTokens = rawQuery.split(' or ').map(t => t.trim()).filter(Boolean);
+        return orTokens.some(token => evaluateMultiCondition(targetStr, token));
+      }
+
+      // IN 조건 (예: '삼겹살, 목심, 갈비')
+      if (rawQuery.includes(',')) {
+        const inTokens = rawQuery.split(',').map(t => t.trim()).filter(Boolean);
+        return inTokens.some(token => targetStr.includes(token));
+      }
+
+      // AND 조건 및 공백 분리 (예: '삼겹살 AND 냉장' 또는 '삼겹살 냉장')
+      const andTokens = rawQuery.split(/ and | /).map(t => t.trim()).filter(Boolean);
+      return andTokens.every(token => targetStr.includes(token));
+    }
 
     function setDateFilter(mode) {
       ['btn_today', 'btn_yesterday', 'btn_this_month', 'btn_all'].forEach(id => {
@@ -1265,7 +1366,7 @@ HTML_PAGE = """<!DOCTYPE html>
         document.getElementById('dateFilterLabel').innerHTML = '<i class="bi bi-calendar-range"></i> 입고 일자:';
         headerActions.innerHTML = `
           <button class="btn btn-outline" onclick="document.getElementById('excelFileInput').click()"><i class="bi bi-file-earmark-excel"></i> 엑셀 일괄입고</button>
-          <button class="btn btn-primary" onclick="openModal('inboundModal')"><i class="bi bi-plus-lg"></i> 신규 입고요청</button>
+          <button class="btn btn-primary" onclick="openInboundCreateModal()"><i class="bi bi-plus-lg"></i> + 신규 입고등록</button>
         `;
         renderSubTabs();
       } else if (tab === 'OUTBOUND') {
@@ -1319,7 +1420,7 @@ HTML_PAGE = """<!DOCTYPE html>
         steps.forEach(s => {
           container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`;
         });
-        container.innerHTML += `<div class="sub-tab sub-tab-create" onclick="openModal('inboundModal')"><i class="bi bi-plus-circle-fill"></i> + 입고요청 등록하기</div>`;
+        container.innerHTML += `<div class="sub-tab sub-tab-create" onclick="openInboundCreateModal()"><i class="bi bi-plus-circle-fill"></i> + 신규 입고등록</div>`;
       } else if (currentMain === 'OUTBOUND') {
         const steps = [
           {k:'OUT_STOCK', n:'1. 출하요청리스트 (현 재고장)'},
@@ -1383,7 +1484,6 @@ HTML_PAGE = """<!DOCTYPE html>
       loadData();
     }
 
-    // 엑셀 다운로드 (SheetJS 기반)
     function downloadCurrentTableExcel() {
       const table = document.querySelector('.table-card table');
       if (!table) return;
@@ -1396,7 +1496,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     async function loadData() {
       const head = document.getElementById('tableHead'), body = document.getElementById('tableBody');
-      const keyword = (document.getElementById('filter_keyword') ? document.getElementById('filter_keyword').value : '').toLowerCase().trim();
+      const keyword = (document.getElementById('filter_keyword') ? document.getElementById('filter_keyword').value : '').trim();
       body.innerHTML = '<tr><td colspan="18" style="text-align:center; padding:15px;">데이터 조회 중...</td></tr>';
 
       const sDate = document.getElementById('filter_start').value;
@@ -1412,7 +1512,7 @@ HTML_PAGE = """<!DOCTYPE html>
         if (eDate) dateQuery += `&end_date=${eDate}`;
       }
 
-      // --- [1. 입고 관리 뷰] ---
+      // 1. 입고 관리 뷰
       if (currentMain === 'INBOUND') {
         head.innerHTML = `
           <tr>
@@ -1426,12 +1526,12 @@ HTML_PAGE = """<!DOCTYPE html>
             <th>품목명</th>
             <th>부위명</th>
             <th>보관</th>
-            <th style="text-align:center;">계근유무</th>
+            <th style="text-align:center;">규격/계근구분</th>
             <th style="text-align:right;">박스</th>
             <th style="text-align:right;">실중량(kg)</th>
             <th style="text-align:right;">단가(kg)</th>
             <th style="text-align:right;">총 매입금액</th>
-            <th>유통기한</th>
+            <th>소비기한</th>
             <th style="text-align:center;">작업 관리</th>
             <th>GRID코드</th>
           </tr>
@@ -1440,16 +1540,10 @@ HTML_PAGE = """<!DOCTYPE html>
         let list = await res.json();
 
         if (keyword) {
-          list = list.filter(i => 
-            (i.item_name && i.item_name.toLowerCase().includes(keyword)) ||
-            (i.cut_name && i.cut_name.toLowerCase().includes(keyword)) ||
-            (i.brand && i.brand.toLowerCase().includes(keyword)) ||
-            (i.vendor && i.vendor.toLowerCase().includes(keyword)) ||
-            (i.bl_no && i.bl_no.toLowerCase().includes(keyword)) ||
-            (i.trace_no && i.trace_no.toLowerCase().includes(keyword)) ||
-            (i.warehouse && i.warehouse.toLowerCase().includes(keyword)) ||
-            (i.grid_no && i.grid_no.toLowerCase().includes(keyword))
-          );
+          list = list.filter(i => {
+            const rowStr = `${i.item_name} ${i.cut_name} ${i.brand} ${i.vendor} ${i.bl_no} ${i.trace_no} ${i.warehouse} ${i.grid_no} ${i.storage_type}`;
+            return evaluateMultiCondition(rowStr, keyword);
+          });
         }
 
         let sumBox = 0, sumWeight = 0.0, sumAmount = 0;
@@ -1469,14 +1563,14 @@ HTML_PAGE = """<!DOCTYPE html>
           if (currentSub === 'IN_REQUEST') {
             btns = `
               <button class="btn btn-primary" onclick="advIn(${i.id})">확정 <i class="bi bi-arrow-right"></i></button>
-              <button class="btn btn-outline" onclick="openEditModal('INBOUND', ${i.id}, '${i.inbound_date}', '${i.bl_no||''}', '${i.brand||''}', '${i.item_name}', '${i.cut_name}', '${i.warehouse||''}', ${i.box_qty}, ${i.weight_kg}, ${i.cost_per_kg}, '${i.is_weighed}')"><i class="bi bi-pencil"></i></button>
+              <button class="btn btn-outline" onclick="openEditModal('INBOUND', ${i.id}, '${i.inbound_date}', '${i.bl_no||''}', '${i.brand||''}', '${i.item_name}', '${i.cut_name}', '${i.warehouse||''}', ${i.box_qty}, ${i.weight_kg}, ${i.cost_per_kg}, '${i.is_weighed}', '${i.exp_date}')"><i class="bi bi-pencil"></i></button>
               <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('INBOUND', ${i.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
               <button class="btn btn-outline" style="color:#dc2626;" onclick="revertIn(${i.id}, '요청 취소(삭제)')"><i class="bi bi-trash"></i></button>
             `;
           } else if (currentSub === 'IN_CONFIRM') {
             btns = `
               <button class="btn btn-success" onclick="advIn(${i.id})"><i class="bi bi-check-lg"></i> 입고완료</button>
-              <button class="btn btn-outline" onclick="openEditModal('INBOUND', ${i.id}, '${i.inbound_date}', '${i.bl_no||''}', '${i.brand||''}', '${i.item_name}', '${i.cut_name}', '${i.warehouse||''}', ${i.box_qty}, ${i.weight_kg}, ${i.cost_per_kg}, '${i.is_weighed}')"><i class="bi bi-pencil"></i></button>
+              <button class="btn btn-outline" onclick="openEditModal('INBOUND', ${i.id}, '${i.inbound_date}', '${i.bl_no||''}', '${i.brand||''}', '${i.item_name}', '${i.cut_name}', '${i.warehouse||''}', ${i.box_qty}, ${i.weight_kg}, ${i.cost_per_kg}, '${i.is_weighed}', '${i.exp_date}')"><i class="bi bi-pencil"></i></button>
               <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('INBOUND', ${i.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
               <button class="btn btn-outline" style="color:#d97706;" onclick="revertIn(${i.id}, '이전 단계 반려')"><i class="bi bi-arrow-counterclockwise"></i> 반려</button>
             `;
@@ -1488,7 +1582,9 @@ HTML_PAGE = """<!DOCTYPE html>
             `;
           }
 
-          const weighCheckbox = `<input type="checkbox" ${i.is_weighed==='Y'?'checked':''} style="width:16px; height:16px; cursor:pointer;" onchange="toggleInboundWeigh(${i.id})" />`;
+          const weighBadge = i.is_weighed === 'Y' 
+            ? `<span class="badge badge-weighed" onclick="toggleInboundWeigh(${i.id})" title="클릭하여 규격 전환">비규격(요청)</span>`
+            : `<span class="badge badge-unweighed" onclick="toggleInboundWeigh(${i.id})" title="클릭하여 비규격 전환">규격(미요청)</span>`;
 
           return `
             <tr>
@@ -1502,7 +1598,7 @@ HTML_PAGE = """<!DOCTYPE html>
               <td><span class="item-tag">${i.item_name}</span></td>
               <td><strong>${i.cut_name}</strong></td>
               <td><span class="badge ${i.storage_type==='냉장'?'badge-chilled':'badge-frozen'}">${i.storage_type}</span></td>
-              <td style="text-align:center;">${weighCheckbox}</td>
+              <td style="text-align:center;">${weighBadge}</td>
               <td style="text-align:right;"><strong>${i.box_qty}</strong> Box</td>
               <td style="text-align:right;"><strong>${i.weight_kg.toLocaleString()}</strong> kg</td>
               <td style="text-align:right;">${i.cost_per_kg.toLocaleString()}원</td>
@@ -1514,7 +1610,7 @@ HTML_PAGE = """<!DOCTYPE html>
           `;
         }).join('') : '<tr><td colspan="18" style="text-align:center; padding:20px; color:#94a3b8;">조회된 입고 전표가 없습니다.</td></tr>';
 
-      // --- [2. 현 재고장 & 출고 관리] ---
+      // 2. 현 재고장 & 출고 관리
       } else if (currentMain === 'OUTBOUND') {
         if (currentSub === 'OUT_STOCK') {
           head.innerHTML = `
@@ -1524,14 +1620,14 @@ HTML_PAGE = """<!DOCTYPE html>
               <th>브랜드</th>
               <th>품목/부위</th>
               <th>보관</th>
-              <th style="text-align:center;">계근유무</th>
+              <th style="text-align:center;">규격/계근구분</th>
               <th style="text-align:right; background:#f1f5f9;">기준 평중(kg/Box)</th>
               <th style="text-align:right; background:#eff6ff;">최초 입고(Box/kg)</th>
               <th style="text-align:right; background:#fef2f2; color:#b91c1c;">현재고 잔여(Box/kg)</th>
               <th style="text-align:right;">원가단가</th>
               <th style="text-align:right;">재고 평가금액</th>
               <th>창고</th>
-              <th>유통기한</th>
+              <th>소비기한</th>
               <th style="text-align:center;">관리 작업</th>
               <th>GRID코드</th>
             </tr>
@@ -1540,15 +1636,10 @@ HTML_PAGE = """<!DOCTYPE html>
           let list = await res.json();
 
           if (keyword) {
-            list = list.filter(l => 
-              (l.item_name && l.item_name.toLowerCase().includes(keyword)) ||
-              (l.cut_name && l.cut_name.toLowerCase().includes(keyword)) ||
-              (l.brand && l.brand.toLowerCase().includes(keyword)) ||
-              (l.bl_no && l.bl_no.toLowerCase().includes(keyword)) ||
-              (l.trace_no && l.trace_no.toLowerCase().includes(keyword)) ||
-              (l.warehouse && l.warehouse.toLowerCase().includes(keyword)) ||
-              (l.grid_no && l.grid_no.toLowerCase().includes(keyword))
-            );
+            list = list.filter(l => {
+              const rowStr = `${l.item_name} ${l.cut_name} ${l.brand} ${l.bl_no} ${l.trace_no} ${l.warehouse} ${l.grid_no} ${l.storage_type}`;
+              return evaluateMultiCondition(rowStr, keyword);
+            });
           }
 
           let sumBox = 0, sumWeight = 0.0, sumAmount = 0;
@@ -1565,7 +1656,9 @@ HTML_PAGE = """<!DOCTYPE html>
 
           body.innerHTML = list.length ? list.map(l => {
             const evalAmount = Math.round(l.current_weight_kg * l.cost_per_kg);
-            const weighCheckbox = `<input type="checkbox" ${l.is_weighed==='Y'?'checked':''} style="width:16px; height:16px; cursor:pointer;" onchange="toggleInventoryWeigh(${l.id})" />`;
+            const weighBadge = l.is_weighed === 'Y' 
+              ? `<span class="badge badge-weighed" onclick="toggleInventoryWeigh(${l.id})" title="클릭하여 규격 전환">비규격(요청)</span>`
+              : `<span class="badge badge-unweighed" onclick="toggleInventoryWeigh(${l.id})" title="클릭하여 비규격 전환">규격(미요청)</span>`;
 
             return `
               <tr>
@@ -1574,7 +1667,7 @@ HTML_PAGE = """<!DOCTYPE html>
                 <td><span class="brand-tag">${l.brand || '-'}</span></td>
                 <td><span class="item-tag">${l.item_name}</span> <strong>${l.cut_name}</strong></td>
                 <td><span class="badge ${l.storage_type==='냉장'?'badge-chilled':'badge-frozen'}">${l.storage_type}</span></td>
-                <td style="text-align:center;">${weighCheckbox}</td>
+                <td style="text-align:center;">${weighBadge}</td>
                 <td style="text-align:right; background:#f1f5f9; font-weight:bold; color:#0284c7;">${l.avg_box_weight} kg/Box</td>
                 <td style="text-align:right; background:#eff6ff;">${l.initial_box_qty} Box / ${l.initial_weight_kg.toLocaleString()} kg</td>
                 <td style="text-align:right; background:#fef2f2; font-weight:700; color:#b91c1c;">${l.current_box_qty} Box / ${l.current_weight_kg.toLocaleString()} kg</td>
@@ -1601,13 +1694,13 @@ HTML_PAGE = """<!DOCTYPE html>
               <th>이력번호</th>
               <th>브랜드</th>
               <th>품목/부위</th>
-              <th style="text-align:center;">계근유무</th>
+              <th style="text-align:center;">규격/계근구분</th>
               <th style="text-align:right;">기준평중</th>
               <th style="text-align:right;">출고 박스</th>
               <th style="text-align:right;">출고 실중량(kg)</th>
               <th style="text-align:right;">판매단가</th>
               <th style="text-align:right;">총 매출금액</th>
-              <th>유통기한</th>
+              <th>소비기한</th>
               <th style="text-align:center;">작업 / 팩스발송</th>
               <th>GRID코드</th>
             </tr>
@@ -1616,16 +1709,10 @@ HTML_PAGE = """<!DOCTYPE html>
           let list = await res.json();
 
           if (keyword) {
-            list = list.filter(o => 
-              (o.item_name && o.item_name.toLowerCase().includes(keyword)) ||
-              (o.cut_name && o.cut_name.toLowerCase().includes(keyword)) ||
-              (o.customer && o.customer.toLowerCase().includes(keyword)) ||
-              (o.brand && o.brand.toLowerCase().includes(keyword)) ||
-              (o.bl_no && o.bl_no.toLowerCase().includes(keyword)) ||
-              (o.trace_no && o.trace_no.toLowerCase().includes(keyword)) ||
-              (o.warehouse && o.warehouse.toLowerCase().includes(keyword)) ||
-              (o.grid_no && o.grid_no.toLowerCase().includes(keyword))
-            );
+            list = list.filter(o => {
+              const rowStr = `${o.item_name} ${o.cut_name} ${o.customer} ${o.brand} ${o.bl_no} ${o.trace_no} ${o.warehouse} ${o.grid_no}`;
+              return evaluateMultiCondition(rowStr, keyword);
+            });
           }
 
           let sumBox = 0, sumWeight = 0.0, sumAmount = 0;
@@ -1645,14 +1732,14 @@ HTML_PAGE = """<!DOCTYPE html>
             if (currentSub === 'OUT_REQUEST') {
               btns = `
                 <button class="btn btn-primary" onclick="advOut(${o.id})">확정 <i class="bi bi-arrow-right"></i></button>
-                <button class="btn btn-outline" onclick="openEditModal('OUTBOUND', ${o.id}, '${o.outbound_date}', '', '', '', '', '', ${o.box_qty}, ${o.weight_kg}, ${o.unit_price_kg}, '')"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline" onclick="openEditModal('OUTBOUND', ${o.id}, '${o.outbound_date}', '', '', '', '', '', ${o.box_qty}, ${o.weight_kg}, ${o.unit_price_kg}, '', '')"><i class="bi bi-pencil"></i></button>
                 <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('OUTBOUND', ${o.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
                 <button class="btn btn-outline" style="color:#dc2626;" onclick="revertOut(${o.id}, '요청 취소(재고복구)')"><i class="bi bi-arrow-counterclockwise"></i> 요청취소</button>
               `;
             } else if (currentSub === 'OUT_CONFIRM') {
               btns = `
                 <button class="btn btn-success" onclick="advOut(${o.id})"><i class="bi bi-truck"></i> 출고완료</button>
-                <button class="btn btn-outline" onclick="openEditModal('OUTBOUND', ${o.id}, '${o.outbound_date}', '', '', '', '', '', ${o.box_qty}, ${o.weight_kg}, ${o.unit_price_kg}, '')"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline" onclick="openEditModal('OUTBOUND', ${o.id}, '${o.outbound_date}', '', '', '', '', '', ${o.box_qty}, ${o.weight_kg}, ${o.unit_price_kg}, '', '')"><i class="bi bi-pencil"></i></button>
                 <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('OUTBOUND', ${o.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
                 <button class="btn btn-outline" style="color:#d97706;" onclick="revertOut(${o.id}, '이전 단계 반려')"><i class="bi bi-arrow-counterclockwise"></i> 반려</button>
               `;
@@ -1664,7 +1751,9 @@ HTML_PAGE = """<!DOCTYPE html>
               `;
             }
 
-            const weighCheckbox = `<input type="checkbox" ${o.is_weighed==='Y'?'checked':''} style="width:16px; height:16px; cursor:pointer;" onchange="toggleOutboundWeigh(${o.id})" />`;
+            const weighBadge = o.is_weighed === 'Y' 
+              ? `<span class="badge badge-weighed" onclick="toggleOutboundWeigh(${o.id})" title="클릭하여 규격 전환">비규격(요청)</span>`
+              : `<span class="badge badge-unweighed" onclick="toggleOutboundWeigh(${o.id})" title="클릭하여 비규격 전환">규격(미요청)</span>`;
 
             return `
               <tr>
@@ -1676,7 +1765,7 @@ HTML_PAGE = """<!DOCTYPE html>
                 <td><code>${o.trace_no}</code></td>
                 <td><span class="brand-tag">${o.brand || '-'}</span></td>
                 <td><span class="item-tag">${o.item_name}</span> <strong>${o.cut_name}</strong></td>
-                <td style="text-align:center;">${weighCheckbox}</td>
+                <td style="text-align:center;">${weighBadge}</td>
                 <td style="text-align:right; color:#0284c7; font-weight:600;">${o.avg_box_weight} kg/Box</td>
                 <td style="text-align:right;"><strong>${o.box_qty}</strong> Box</td>
                 <td style="text-align:right; font-weight:700; color:#b91c1c;">${o.weight_kg.toLocaleString()} kg</td>
@@ -1693,7 +1782,7 @@ HTML_PAGE = """<!DOCTYPE html>
           }).join('') : '<tr><td colspan="17" style="text-align:center; padding:20px; color:#94a3b8;">대기 중인 출고 건이 없습니다.</td></tr>';
         }
 
-      // --- [3. 통합 클레임 관리 뷰] ---
+      // 3. 통합 클레임 관리 뷰
       } else if (currentMain === 'CLAIM') {
         head.innerHTML = `
           <tr>
@@ -1719,17 +1808,10 @@ HTML_PAGE = """<!DOCTYPE html>
         let list = await res.json();
 
         if (keyword) {
-          list = list.filter(c => 
-            (c.item_name && c.item_name.toLowerCase().includes(keyword)) ||
-            (c.cut_name && c.cut_name.toLowerCase().includes(keyword)) ||
-            (c.partner_name && c.partner_name.toLowerCase().includes(keyword)) ||
-            (c.brand && c.brand.toLowerCase().includes(keyword)) ||
-            (c.bl_no && c.bl_no.toLowerCase().includes(keyword)) ||
-            (c.trace_no && c.trace_no.toLowerCase().includes(keyword)) ||
-            (c.warehouse && c.warehouse.toLowerCase().includes(keyword)) ||
-            (c.grid_no && c.grid_no.toLowerCase().includes(keyword)) ||
-            (c.claim_reason && c.claim_reason.toLowerCase().includes(keyword))
-          );
+          list = list.filter(c => {
+            const rowStr = `${c.item_name} ${c.cut_name} ${c.partner_name} ${c.brand} ${c.bl_no} ${c.trace_no} ${c.warehouse} ${c.grid_no} ${c.claim_reason}`;
+            return evaluateMultiCondition(rowStr, keyword);
+          });
         }
 
         let sumBox = 0, sumWeight = 0.0, sumAmount = 0;
@@ -1773,7 +1855,7 @@ HTML_PAGE = """<!DOCTYPE html>
           `;
         }).join('') : '<tr><td colspan="16" style="text-align:center; padding:20px; color:#94a3b8;">등록된 클레임 내역이 없습니다.</td></tr>';
 
-      // --- [4. 거래처 마스터] ---
+      // 4. 거래처 마스터
       } else if (currentMain === 'PARTNER') {
         head.innerHTML = '<tr><th>ID</th><th>대분류 구분</th><th>상호명</th><th>사업자번호</th><th>담당자</th><th>연락처</th><th>사업장/창고 주소</th><th style="text-align:center;">관리</th></tr>';
         const typeQuery = partnerSubTab === 'ALL' ? '' : `?type=${partnerSubTab}`;
@@ -1799,7 +1881,7 @@ HTML_PAGE = """<!DOCTYPE html>
           `;
         }).join('') : '<tr><td colspan="8" style="text-align:center; padding:20px; color:#94a3b8;">해당 분류의 거래처가 없습니다.</td></tr>';
 
-      // --- [5. 품목/부위 마스터] ---
+      // 5. 품목/부위 마스터
       } else if (currentMain === 'ITEM_CUT_MASTER') {
         if (masterSubTab === 'ITEM_LIST') {
           head.innerHTML = '<tr><th>품목 ID</th><th>품목코드</th><th>품목명 (대분류)</th><th>축종</th><th style="text-align:center;">관리</th></tr>';
@@ -1875,7 +1957,7 @@ HTML_PAGE = """<!DOCTYPE html>
       document.getElementById('pdf_out_date').innerText = item.outbound_date;
       document.getElementById('pdf_customer').innerText = item.customer;
       document.getElementById('pdf_out_no').innerText = item.outbound_no;
-      document.getElementById('pdf_weighed').innerText = item.is_weighed === 'Y' ? '실계근 상차 요청 (필수)' : '기본 평중 기준 상차';
+      document.getElementById('pdf_weighed').innerText = item.is_weighed === 'Y' ? '비규격 (실계근 상차 필수)' : '규격 (계근 미요청 / 평중 상차)';
       
       document.getElementById('pdf_grid').innerText = item.grid_no || '-';
       document.getElementById('pdf_bl').innerText = item.bl_no || '-';
@@ -1891,7 +1973,14 @@ HTML_PAGE = """<!DOCTYPE html>
       openModal('pdfModal');
     }
 
-    function openEditModal(type, id, dt, bl_no, brand, item_name, cut_name, warehouse, box, weight, price, is_weighed) {
+    async function openInboundCreateModal() {
+      await loadWarehouseOptions();
+      autoCalculateExpDate();
+      openModal('inboundModal');
+    }
+
+    async function openEditModal(type, id, dt, bl_no, brand, item_name, cut_name, warehouse, box, weight, price, is_weighed, exp_date) {
+      await loadWarehouseOptions();
       document.getElementById('edit_type').value = type;
       document.getElementById('edit_id').value = id;
       document.getElementById('edit_date').value = dt;
@@ -1909,7 +1998,8 @@ HTML_PAGE = """<!DOCTYPE html>
         document.getElementById('edit_item_name').value = item_name;
         document.getElementById('edit_cut_name').value = cut_name;
         document.getElementById('edit_warehouse').value = warehouse || '광주냉장창고';
-        document.getElementById('edit_is_weighed').value = is_weighed || 'Y';
+        document.getElementById('edit_is_weighed').value = is_weighed || 'N';
+        document.getElementById('edit_exp_date').value = exp_date || '';
       } else {
         inFields.style.display = 'none';
       }
@@ -1932,7 +2022,8 @@ HTML_PAGE = """<!DOCTYPE html>
           box_qty: Number(document.getElementById('edit_box').value),
           weight_kg: Number(document.getElementById('edit_weight').value),
           cost_per_kg: Number(document.getElementById('edit_price').value),
-          is_weighed: document.getElementById('edit_is_weighed').value
+          is_weighed: document.getElementById('edit_is_weighed').value,
+          exp_date: document.getElementById('edit_exp_date').value
         };
       } else {
         payload = {
@@ -2048,7 +2139,11 @@ HTML_PAGE = """<!DOCTYPE html>
       const d = await r.json(); alert(d.message || d.detail); e.target.value = ''; setSubTab('IN_REQUEST');
     }
 
-    window.addEventListener('DOMContentLoaded', () => { renderSubTabs(); loadData(); });
+    window.addEventListener('DOMContentLoaded', () => { 
+      loadWarehouseOptions();
+      renderSubTabs(); 
+      loadData(); 
+    });
   </script>
 </body>
 </html>
