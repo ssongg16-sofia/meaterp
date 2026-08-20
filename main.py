@@ -1,6 +1,7 @@
 import io
 import os
-from datetime import datetime, date
+import random
+from datetime import datetime, date, timedelta
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
@@ -32,13 +33,13 @@ def get_db():
         db.close()
 
 # -----------------------------------------------------------------------------
-# 2. ORM 테이블 정의 (평중 계산 및 출고 전표)
+# 2. ORM 테이블 정의
 # -----------------------------------------------------------------------------
 class Partner(Base):
     __tablename__ = "partners"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
-    type = Column(String(30), nullable=False)  # 'VENDOR', 'CUSTOMER', 'WAREHOUSE', 'SHIPPING', 'ETC'
+    type = Column(String(30), nullable=False)  # VENDOR, CUSTOMER, WAREHOUSE, SHIPPING, ETC
     biz_no = Column(String(30), nullable=True)
     contact_person = Column(String(50), nullable=True)
     phone = Column(String(30), nullable=True)
@@ -66,7 +67,6 @@ class InboundRecord(Base):
     __tablename__ = "inbounds"
     id = Column(Integer, primary_key=True, index=True)
     inbound_no = Column(String(50), unique=True, index=True)
-    grid_no = Column(String(50), nullable=True, index=True)
     inbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
     vendor = Column(String(100), nullable=False)
     bl_no = Column(String(50), nullable=True)
@@ -83,12 +83,12 @@ class InboundRecord(Base):
     exp_date = Column(String(20), nullable=False)
     is_weighed = Column(String(10), default="Y")
     status = Column(String(20), default="IN_REQUEST")
+    grid_no = Column(String(50), nullable=True, index=True)  # 6자리 랜덤 GRID 코드
     created_at = Column(DateTime, default=datetime.now)
 
 class InventoryLot(Base):
     __tablename__ = "inventory_lots"
     id = Column(Integer, primary_key=True, index=True)
-    grid_no = Column(String(50), nullable=False, index=True)
     sku_code = Column(String(50), nullable=False)
     bl_no = Column(String(50), nullable=True)
     trace_no = Column(String(50), nullable=False, index=True)
@@ -98,20 +98,20 @@ class InventoryLot(Base):
     storage_type = Column(String(20), nullable=False)
     initial_box_qty = Column(Integer, default=0)
     initial_weight_kg = Column(Float, default=0.0)
-    avg_box_weight = Column(Float, default=0.0)             # 입고 기본 평중(kg/Box) = initial_weight / initial_box
+    avg_box_weight = Column(Float, default=0.0)
     current_box_qty = Column(Integer, nullable=False)
     current_weight_kg = Column(Float, nullable=False)
     cost_per_kg = Column(Float, nullable=False)
     warehouse = Column(String(50), nullable=False)
     exp_date = Column(String(20), nullable=False)
     is_weighed = Column(String(10), default="Y")
+    grid_no = Column(String(50), nullable=False, index=True) # 6자리 랜덤 GRID 코드
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 class OutboundRecord(Base):
     __tablename__ = "outbounds"
     id = Column(Integer, primary_key=True, index=True)
     outbound_no = Column(String(50), unique=True, index=True)
-    grid_no = Column(String(50), nullable=True)
     outbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
     lot_id = Column(Integer, nullable=False)
     customer = Column(String(100), nullable=False)
@@ -122,14 +122,15 @@ class OutboundRecord(Base):
     cut_name = Column(String(100), nullable=False)
     storage_type = Column(String(20), nullable=False)
     box_qty = Column(Integer, nullable=False)
-    avg_box_weight = Column(Float, default=0.0)             # 적용된 기준 평중(kg/Box)
-    weight_kg = Column(Float, nullable=False)               # box_qty * avg_box_weight
+    avg_box_weight = Column(Float, default=0.0)
+    weight_kg = Column(Float, nullable=False)
     unit_price_kg = Column(Float, nullable=False)
     total_amount = Column(Float, nullable=False)
     exp_date = Column(String(20), nullable=False)
     warehouse = Column(String(50), nullable=False)
     is_weighed = Column(String(10), default="Y")
     status = Column(String(20), default="OUT_REQUEST")
+    grid_no = Column(String(50), nullable=True)             # 원본 GRID 코드
     created_at = Column(DateTime, default=datetime.now)
 
 class StockAdjustment(Base):
@@ -144,7 +145,11 @@ class StockAdjustment(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# 초기 시드 데이터
+def generate_random_grid() -> str:
+    """6자리 랜덤 숫자 GRID 생성 (예: GRID-582914)"""
+    return f"GRID-{random.randint(100000, 999999)}"
+
+# 초기 샘플 데이터 시딩
 def init_sample_data():
     db = SessionLocal()
     if db.query(Partner).count() == 0:
@@ -171,9 +176,10 @@ def init_sample_data():
         db.add_all(cuts)
 
     if db.query(InventoryLot).count() == 0:
+        today_str = datetime.now().strftime("%Y-%m-%d")
         lots = [
-            InventoryLot(grid_no="GRID-PK-001", sku_code="PK-CAN-01", bl_no="ONEYVAN6948200", trace_no="802410290114", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장", initial_box_qty=50, initial_weight_kg=1020.5, avg_box_weight=20.41, current_box_qty=45, current_weight_kg=918.45, cost_per_kg=8400, warehouse="광주냉장창고", exp_date="2026-09-02", is_weighed="Y"),
-            InventoryLot(grid_no="GRID-BF-002", sku_code="BF-USA-05", bl_no="MAEU9201948201", trace_no="100392019482", brand="엑셀", item_name="우육(소)", cut_name="척아이롤", storage_type="냉동", initial_box_qty=150, initial_weight_kg=3050.0, avg_box_weight=20.33, current_box_qty=120, current_weight_kg=2439.6, cost_per_kg=14500, warehouse="용인냉동센터", exp_date="2027-04-15", is_weighed="N")
+            InventoryLot(grid_no="GRID-738201", sku_code="PK-CAN-01", bl_no="ONEYVAN6948200", trace_no="802410290114", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장", initial_box_qty=50, initial_weight_kg=1020.5, avg_box_weight=20.41, current_box_qty=45, current_weight_kg=918.45, cost_per_kg=8400, warehouse="광주냉장창고", exp_date="2026-09-02", is_weighed="Y"),
+            InventoryLot(grid_no="GRID-910482", sku_code="BF-USA-05", bl_no="MAEU9201948201", trace_no="100392019482", brand="엑셀", item_name="우육(소)", cut_name="척아이롤", storage_type="냉동", initial_box_qty=150, initial_weight_kg=3050.0, avg_box_weight=20.33, current_box_qty=120, current_weight_kg=2439.6, cost_per_kg=14500, warehouse="용인냉동센터", exp_date="2027-04-15", is_weighed="N")
         ]
         db.add_all(lots)
     db.commit()
@@ -326,17 +332,20 @@ def delete_cut_master(cut_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "부위 마스터가 삭제되었습니다."}
 
-# 입고 API
+# 입고 API (일일 단위 / 기간 필터 포함)
 @app.get("/api/inbounds")
 def get_inbounds(
     status: str,
+    target_date: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     month: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     q = db.query(InboundRecord).filter(InboundRecord.status == status)
-    if month:
+    if target_date:
+        q = q.filter(InboundRecord.inbound_date == target_date)
+    elif month:
         q = q.filter(InboundRecord.inbound_date.like(f"{month}%"))
     else:
         if start_date: q = q.filter(InboundRecord.inbound_date >= start_date)
@@ -346,7 +355,7 @@ def get_inbounds(
 @app.post("/api/inbounds")
 def create_inbound(req: InboundCreate, db: Session = Depends(get_db)):
     inbound_no = f"IN-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    grid_no = f"GRID-{datetime.now().strftime('%m%d')}-{req.trace_no[-4:] if len(req.trace_no)>=4 else '0001'}"
+    grid_no = generate_random_grid() # 6자리 무작위 GRID 코드 생성
     in_date = req.inbound_date if req.inbound_date else datetime.now().strftime("%Y-%m-%d")
     total = round(req.weight_kg * req.cost_per_kg)
     item = InboundRecord(
@@ -358,7 +367,7 @@ def create_inbound(req: InboundCreate, db: Session = Depends(get_db)):
     )
     db.add(item)
     db.commit()
-    return {"message": "입고요청 등록 완료", "inbound_no": inbound_no}
+    return {"message": f"입고요청 등록 완료 ({grid_no})", "inbound_no": inbound_no}
 
 @app.put("/api/inbounds/{inbound_id}")
 def update_inbound(inbound_id: int, req: UpdateInbound, db: Session = Depends(get_db)):
@@ -404,7 +413,7 @@ def advance_inbound(inbound_id: int, db: Session = Depends(get_db)):
         else:
             sku = "SKU-" + inbound.trace_no[:6]
             new_lot = InventoryLot(
-                grid_no=inbound.grid_no or f"GRID-{inbound.trace_no[-4:]}",
+                grid_no=inbound.grid_no or generate_random_grid(),
                 sku_code=sku, bl_no=inbound.bl_no, trace_no=inbound.trace_no, brand=inbound.brand,
                 item_name=inbound.item_name, cut_name=inbound.cut_name, storage_type=inbound.storage_type,
                 initial_box_qty=inbound.box_qty, initial_weight_kg=inbound.weight_kg, avg_box_weight=avg_w,
@@ -475,7 +484,7 @@ async def upload_inbound_excel(file: UploadFile = File(...), db: Session = Depen
             is_weighed = str(row[13]).strip() if len(row) > 13 and row[13] else "Y"
 
             inbound_no = f"IN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{count+1}"
-            grid_no = f"GRID-{datetime.now().strftime('%m%d')}-{trace_no[-4:] if len(trace_no)>=4 else '0001'}"
+            grid_no = generate_random_grid()
             inbound = InboundRecord(
                 inbound_no=inbound_no, grid_no=grid_no, inbound_date=in_date, vendor=vendor, bl_no=bl_no,
                 trace_no=trace_no, brand=brand, item_name=item_name, cut_name=cut_name,
@@ -507,20 +516,22 @@ def toggle_weigh(lot_id: int, db: Session = Depends(get_db)):
 @app.get("/api/outbounds")
 def get_outbounds(
     status: str,
+    target_date: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     month: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     q = db.query(OutboundRecord).filter(OutboundRecord.status == status)
-    if month:
+    if target_date:
+        q = q.filter(OutboundRecord.outbound_date == target_date)
+    elif month:
         q = q.filter(OutboundRecord.outbound_date.like(f"{month}%"))
     else:
         if start_date: q = q.filter(OutboundRecord.outbound_date >= start_date)
         if end_date: q = q.filter(OutboundRecord.outbound_date <= end_date)
     return q.order_by(desc(OutboundRecord.outbound_date), desc(OutboundRecord.id)).all()
 
-# [핵심 로직] 기본 입고데이터 기준 평중(avg_box_weight) 곱연산 적용
 @app.post("/api/outbounds/create-from-stock")
 def create_outbound_from_stock(req: OutboundCreate, db: Session = Depends(get_db)):
     lot = db.query(InventoryLot).filter(InventoryLot.id == req.lot_id).first()
@@ -528,8 +539,7 @@ def create_outbound_from_stock(req: OutboundCreate, db: Session = Depends(get_db
     if req.box_qty > lot.current_box_qty or req.box_qty <= 0:
         raise HTTPException(status_code=400, detail="보유 잔여 박스 수량보다 많이 출하요청할 수 없습니다.")
 
-    # 기본 입고데이터 평중 적용 (initial_weight / initial_box)
-    avg_weight = lot.avg_box_weight if lot.avg_box_weight > 0 else (lot.initial_weight_kg / lot.initial_box_qty if lot.initial_box_qty > 0 else 20.0)
+    avg_weight = lot.avg_box_weight if lot.avg_box_weight > 0 else (round(lot.initial_weight_kg / lot.initial_box_qty, 2) if lot.initial_box_qty > 0 else 20.0)
     calc_weight = round(avg_weight * req.box_qty, 2)
     
     lot.current_box_qty -= req.box_qty
@@ -620,7 +630,7 @@ def adjust_stock(req: AdjustCreate, db: Session = Depends(get_db)):
     return {"message": f"재고 조정({req.adj_type})이 완료되었습니다."}
 
 # -----------------------------------------------------------------------------
-# 4. 프론트엔드 UI (HTML/CSS/JS + 팩스/PDF 인쇄 서식 엔진)
+# 4. 프론트엔드 UI
 # -----------------------------------------------------------------------------
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="ko">
@@ -652,6 +662,8 @@ HTML_PAGE = """<!DOCTYPE html>
     .sub-tabs { display: flex; gap: 6px; background: #e2e8f0; padding: 4px; border-radius: 8px; width: fit-content; }
     .sub-tab { padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; color: #475569; }
     .sub-tab.active { background: #fff; color: var(--primary); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .sub-tab-create { background: #dbeafe; color: #1d4ed8; font-weight: 700; border: 1px dashed #2563eb; }
+    .sub-tab-create:hover { background: #bfdbfe; }
     .filter-card { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
     .filter-group { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; font-weight: 600; }
     .filter-input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; outline: none; background: #fff; }
@@ -680,7 +692,7 @@ HTML_PAGE = """<!DOCTYPE html>
     .badge-etc { background: #f3f4f6; color: #374151; }
     .badge-weighed { background: #dcfce7; color: #15803d; cursor: pointer; }
     .badge-unweighed { background: #fee2e2; color: #b91c1c; cursor: pointer; }
-    .grid-tag { background: #312e81; color: #e0e7ff; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: monospace; font-size: 0.76rem; }
+    .grid-tag { background: #312e81; color: #e0e7ff; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: monospace; font-size: 0.78rem; }
     .bl-tag { font-family: monospace; font-weight: 700; color: #0284c7; }
     .brand-tag { background: #f1f5f9; color: #334155; padding: 2px 5px; border-radius: 4px; font-weight: 600; font-size: 0.76rem; }
     .item-tag { background: #f0fdf4; color: #166534; padding: 2px 5px; border-radius: 4px; font-weight: 600; font-size: 0.76rem; border: 1px solid #bbf7d0; }
@@ -721,15 +733,16 @@ HTML_PAGE = """<!DOCTYPE html>
 
       <div class="filter-card" id="dateFilterCard">
         <div class="filter-group">
-          <span id="dateFilterLabel"><i class="bi bi-calendar-range"></i> 입고 일자:</span>
+          <span id="dateFilterLabel"><i class="bi bi-calendar-range"></i> 기준 일자:</span>
           <input type="date" id="filter_start" class="filter-input" onchange="loadData()" />
           <span>~</span>
           <input type="date" id="filter_end" class="filter-input" onchange="loadData()" />
         </div>
         <div class="filter-btn-group">
-          <button class="filter-btn active" id="btn_all" onclick="setDateFilter('ALL')">전체</button>
+          <button class="filter-btn" id="btn_today" onclick="setDateFilter('TODAY')">오늘 (당일)</button>
+          <button class="filter-btn" id="btn_yesterday" onclick="setDateFilter('YESTERDAY')">전일</button>
           <button class="filter-btn" id="btn_this_month" onclick="setDateFilter('THIS_MONTH')">당월</button>
-          <button class="filter-btn" id="btn_last_month" onclick="setDateFilter('LAST_MONTH')">전월</button>
+          <button class="filter-btn active" id="btn_all" onclick="setDateFilter('ALL')">전체</button>
         </div>
       </div>
 
@@ -747,9 +760,9 @@ HTML_PAGE = """<!DOCTYPE html>
   <!-- 1. 입고 등록 모달 -->
   <div class="modal-overlay" id="inboundModal">
     <div class="modal-box">
-      <h3 style="margin-bottom:14px;">신규 축산물 입고요청</h3>
+      <h3 style="margin-bottom:14px;">신규 축산물 입고요청 등록</h3>
       <div style="display:flex; gap:10px;">
-        <div class="form-group" style="flex:1;"><label>입고 일자</label><input type="date" id="in_date" class="form-control" /></div>
+        <div class="form-group" style="flex:1;"><label>입고 일자 (KST 기준)</label><input type="date" id="in_date" class="form-control" /></div>
         <div class="form-group" style="flex:1;"><label>매입처 상호</label><input type="text" id="in_vendor" class="form-control" value="(주)글로벌미트" /></div>
       </div>
       <div style="display:flex; gap:10px;">
@@ -778,7 +791,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
         <button class="btn btn-outline" onclick="closeModal('inboundModal')">취소</button>
-        <button class="btn btn-primary" onclick="submitInbound()">저장</button>
+        <button class="btn btn-primary" onclick="submitInbound()">입고요청 저장</button>
       </div>
     </div>
   </div>
@@ -880,7 +893,6 @@ HTML_PAGE = """<!DOCTYPE html>
         <table style="width:100%; border:1px solid #000; border-collapse:collapse; text-align:center; margin-bottom:20px;">
           <thead>
             <tr style="background:#f2f2f2;">
-              <th style="border:1px solid #000; padding:6px;">GRID 코드</th>
               <th style="border:1px solid #000; padding:6px;">B/L No.</th>
               <th style="border:1px solid #000; padding:6px;">이력번호</th>
               <th style="border:1px solid #000; padding:6px;">품목/부위</th>
@@ -889,11 +901,11 @@ HTML_PAGE = """<!DOCTYPE html>
               <th style="border:1px solid #000; padding:6px;">출하 박스</th>
               <th style="border:1px solid #000; padding:6px;">출하 실중량(kg)</th>
               <th style="border:1px solid #000; padding:6px;">유통기한</th>
+              <th style="border:1px solid #000; padding:6px;">GRID 매칭코드</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td style="border:1px solid #000; padding:8px;" id="pdf_grid">-</td>
               <td style="border:1px solid #000; padding:8px;" id="pdf_bl">-</td>
               <td style="border:1px solid #000; padding:8px;" id="pdf_trace">-</td>
               <td style="border:1px solid #000; padding:8px;" id="pdf_item_cut">-</td>
@@ -902,19 +914,20 @@ HTML_PAGE = """<!DOCTYPE html>
               <td style="border:1px solid #000; padding:8px; font-weight:bold;" id="pdf_box">-</td>
               <td style="border:1px solid #000; padding:8px; font-weight:bold;" id="pdf_weight">-</td>
               <td style="border:1px solid #000; padding:8px;" id="pdf_exp">-</td>
+              <td style="border:1px solid #000; padding:8px; font-family:monospace; font-weight:bold;" id="pdf_grid">-</td>
             </tr>
           </tbody>
         </table>
 
         <div style="border:1px solid #000; padding:12px; margin-bottom:30px;">
           <strong>[출하 시 주의사항]</strong><br/>
-          1. 상기 지정된 이력번호 및 B/L No.의 재고 로트에서 정확히 피킹하여 상차 바랍니다.<br/>
+          1. 상기 지정된 이력번호 및 B/L No., GRID 번호의 재고 로트에서 정확히 피킹하여 상차 바랍니다.<br/>
           2. 상차 완료 즉시 계근표 및 인수증을 본사 FAX 또는 전산으로 회신 부탁드립니다.<br/>
           3. 냉장/냉동 탑차 온도(-18℃ 이하 / 냉장 0~2℃) 확인 후 상차 요망.
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:flex-end; padding:0 20px;">
-          <div>작성일자: <span id="pdf_today"></span></div>
+          <div>작성일시: <span id="pdf_today"></span></div>
           <div style="font-size:14px; font-weight:bold;">담당자 확인 : ________________ (인)</div>
         </div>
       </div>
@@ -982,33 +995,51 @@ HTML_PAGE = """<!DOCTYPE html>
     let currentMain = 'INBOUND', currentSub = 'IN_REQUEST';
     let partnerSubTab = 'ALL';
     let masterSubTab = 'ITEM_LIST';
+    let activeFilterMode = 'ALL';
+    let targetExactDate = null;
     let activeMonthFilter = null;
-    document.getElementById('in_date').value = new Date().toISOString().split('T')[0];
+
+    // 현재 한국 표준시 기준 날짜 설정
+    const nowKST = new Date();
+    const todayStr = nowKST.toISOString().split('T')[0];
+    document.getElementById('in_date').value = todayStr;
 
     function setDateFilter(mode) {
-      document.getElementById('btn_all').classList.remove('active');
-      document.getElementById('btn_this_month').classList.remove('active');
-      document.getElementById('btn_last_month').classList.remove('active');
+      ['btn_today', 'btn_yesterday', 'btn_this_month', 'btn_all'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('active');
+      });
+
       const startInput = document.getElementById('filter_start');
       const endInput = document.getElementById('filter_end');
+      activeFilterMode = mode;
+      targetExactDate = null;
+      activeMonthFilter = null;
 
-      if (mode === 'ALL') {
-        document.getElementById('btn_all').classList.add('active');
-        activeMonthFilter = null;
-        startInput.value = ''; endInput.value = '';
+      if (mode === 'TODAY') {
+        document.getElementById('btn_today').classList.add('active');
+        targetExactDate = todayStr;
+        startInput.value = todayStr;
+        endInput.value = todayStr;
+      } else if (mode === 'YESTERDAY') {
+        document.getElementById('btn_yesterday').classList.add('active');
+        const yest = new Date();
+        yest.setDate(yest.getDate() - 1);
+        const yestStr = yest.toISOString().split('T')[0];
+        targetExactDate = yestStr;
+        startInput.value = yestStr;
+        endInput.value = yestStr;
       } else if (mode === 'THIS_MONTH') {
         document.getElementById('btn_this_month').classList.add('active');
-        const now = new Date(), y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, '0');
+        const y = nowKST.getFullYear();
+        const m = String(nowKST.getMonth() + 1).padStart(2, '0');
         activeMonthFilter = `${y}-${m}`;
         startInput.value = `${y}-${m}-01`;
-        endInput.value = new Date(y, now.getMonth() + 1, 0).toISOString().split('T')[0];
-      } else if (mode === 'LAST_MONTH') {
-        document.getElementById('btn_last_month').classList.add('active');
-        const now = new Date(); now.setMonth(now.getMonth() - 1);
-        const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, '0');
-        activeMonthFilter = `${y}-${m}`;
-        startInput.value = `${y}-${m}-01`;
-        endInput.value = new Date(y, now.getMonth() + 1, 0).toISOString().split('T')[0];
+        endInput.value = new Date(y, nowKST.getMonth() + 1, 0).toISOString().split('T')[0];
+      } else if (mode === 'ALL') {
+        document.getElementById('btn_all').classList.add('active');
+        startInput.value = '';
+        endInput.value = '';
       }
       loadData();
     }
@@ -1064,11 +1095,26 @@ HTML_PAGE = """<!DOCTYPE html>
       const container = document.getElementById('subTabs');
       container.innerHTML = '';
       if (currentMain === 'INBOUND') {
-        const steps = [{k:'IN_REQUEST',n:'1. 입고요청리스트'},{k:'IN_CONFIRM',n:'2. 입고확정리스트'},{k:'IN_DONE',n:'3. 입고완료리스트'}];
-        steps.forEach(s => { container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`; });
+        const steps = [
+          {k:'IN_REQUEST', n:'1. 입고요청리스트'},
+          {k:'IN_CONFIRM', n:'2. 입고확정리스트'},
+          {k:'IN_DONE', n:'3. 입고완료리스트'}
+        ];
+        steps.forEach(s => {
+          container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`;
+        });
+        // 입고요청 등록 탭 전면 복구
+        container.innerHTML += `<div class="sub-tab sub-tab-create" onclick="openModal('inboundModal')"><i class="bi bi-plus-circle-fill"></i> + 입고요청 등록하기</div>`;
       } else if (currentMain === 'OUTBOUND') {
-        const steps = [{k:'OUT_STOCK',n:'1. 출하요청리스트 (현 재고장)'},{k:'OUT_REQUEST',n:'2. 출고요청리스트'},{k:'OUT_CONFIRM',n:'3. 출고확정리스트'},{k:'OUT_DONE',n:'4. 출고완료리스트'}];
-        steps.forEach(s => { container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`; });
+        const steps = [
+          {k:'OUT_STOCK', n:'1. 출하요청리스트 (현 재고장)'},
+          {k:'OUT_REQUEST', n:'2. 출고요청리스트'},
+          {k:'OUT_CONFIRM', n:'3. 출고확정리스트'},
+          {k:'OUT_DONE', n:'4. 출고완료리스트'}
+        ];
+        steps.forEach(s => {
+          container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`;
+        });
       }
     }
 
@@ -1104,7 +1150,10 @@ HTML_PAGE = """<!DOCTYPE html>
       const sDate = document.getElementById('filter_start').value;
       const eDate = document.getElementById('filter_end').value;
       let dateQuery = '';
-      if (activeMonthFilter) {
+
+      if (targetExactDate) {
+        dateQuery = `&target_date=${targetExactDate}`;
+      } else if (activeMonthFilter) {
         dateQuery = `&month=${activeMonthFilter}`;
       } else {
         if (sDate) dateQuery += `&start_date=${sDate}`;
@@ -1113,7 +1162,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
       // 1. 입고 관리
       if (currentMain === 'INBOUND') {
-        head.innerHTML = '<tr><th>전표번호</th><th>GRID코드</th><th>입고일자</th><th>매입처</th><th>B/L No.</th><th>이력번호</th><th>브랜드</th><th>품목명</th><th>부위명</th><th>보관</th><th>계근</th><th style="text-align:right;">박스</th><th style="text-align:right;">실중량(kg)</th><th style="text-align:right;">단가(kg)</th><th style="text-align:right;">총 매입금액</th><th>유통기한</th><th style="text-align:center;">작업 관리</th></tr>';
+        head.innerHTML = '<tr><th>전표번호</th><th>입고일자</th><th>매입처</th><th>B/L No.</th><th>이력번호</th><th>브랜드</th><th>품목명</th><th>부위명</th><th>보관</th><th>계근</th><th style="text-align:right;">박스</th><th style="text-align:right;">실중량(kg)</th><th style="text-align:right;">단가(kg)</th><th style="text-align:right;">총 매입금액</th><th>유통기한</th><th style="text-align:center;">작업 관리</th><th>GRID코드(매칭확인)</th></tr>';
         const res = await fetch(`/api/inbounds?status=${currentSub}${dateQuery}`), list = await res.json();
         body.innerHTML = list.length ? list.map(i => {
           let btns = '';
@@ -1138,7 +1187,6 @@ HTML_PAGE = """<!DOCTYPE html>
           return `
             <tr>
               <td><strong>${i.inbound_no}</strong></td>
-              <td><span class="grid-tag">${i.grid_no || '-'}</span></td>
               <td>${i.inbound_date}</td>
               <td>${i.vendor}</td>
               <td><span class="bl-tag">${i.bl_no || '-'}</span></td>
@@ -1154,6 +1202,7 @@ HTML_PAGE = """<!DOCTYPE html>
               <td style="text-align:right;" class="amount-highlight">${i.total_amount.toLocaleString()}원</td>
               <td>${i.exp_date}</td>
               <td style="text-align:center; white-space:nowrap;">${btns}</td>
+              <td style="text-align:center;"><span class="grid-tag">${i.grid_no || '-'}</span></td>
             </tr>
           `;
         }).join('') : '<tr><td colspan="17" style="text-align:center; padding:20px; color:#94a3b8;">대기 중인 전표가 없습니다.</td></tr>';
@@ -1161,13 +1210,12 @@ HTML_PAGE = """<!DOCTYPE html>
       // 2. 현 재고장 & 출고 관리
       } else if (currentMain === 'OUTBOUND') {
         if (currentSub === 'OUT_STOCK') {
-          head.innerHTML = '<tr><th>GRID코드</th><th>B/L No.</th><th>이력번호</th><th>브랜드</th><th>품목/부위</th><th>보관</th><th>계근유무</th><th style="text-align:right; background:#f1f5f9;">기준 평중(kg/Box)</th><th style="text-align:right; background:#eff6ff;">최초 입고(Box/kg)</th><th style="text-align:right; background:#fef2f2; color:#b91c1c;">현재고 잔여(Box/kg)</th><th style="text-align:right;">원가단가</th><th style="text-align:right;">재고 평가금액</th><th>창고</th><th>유통기한</th><th style="text-align:center;">관리 작업</th></tr>';
+          head.innerHTML = '<tr><th>B/L No.</th><th>이력번호</th><th>브랜드</th><th>품목/부위</th><th>보관</th><th>계근유무</th><th style="text-align:right; background:#f1f5f9;">기준 평중(kg/Box)</th><th style="text-align:right; background:#eff6ff;">최초 입고(Box/kg)</th><th style="text-align:right; background:#fef2f2; color:#b91c1c;">현재고 잔여(Box/kg)</th><th style="text-align:right;">원가단가</th><th style="text-align:right;">재고 평가금액</th><th>창고</th><th>유통기한</th><th style="text-align:center;">관리 작업</th><th>GRID코드(매칭확인)</th></tr>';
           const res = await fetch('/api/inventory'), list = await res.json();
           body.innerHTML = list.length ? list.map(l => {
             const evalAmount = Math.round(l.current_weight_kg * l.cost_per_kg);
             return `
               <tr>
-                <td><span class="grid-tag">${l.grid_no}</span></td>
                 <td><span class="bl-tag">${l.bl_no || '-'}</span></td>
                 <td><code>${l.trace_no}</code></td>
                 <td><span class="brand-tag">${l.brand || '-'}</span></td>
@@ -1185,22 +1233,25 @@ HTML_PAGE = """<!DOCTYPE html>
                   <button class="btn btn-warning" onclick="reqOut(${l.id},'${l.grid_no}',${l.current_box_qty},${l.avg_box_weight},${l.cost_per_kg})"><i class="bi bi-cart-plus"></i> 출하요청</button>
                   <button class="btn btn-outline" style="color:#dc2626;" onclick="openAdjustModal(${l.id})"><i class="bi bi-scissors"></i> 감량/폐기</button>
                 </td>
+                <td style="text-align:center;"><span class="grid-tag">${l.grid_no}</span></td>
               </tr>
             `;
-          }).join('') : '<tr><td colspan="16" style="text-align:center; padding:20px; color:#94a3b8;">보유 재고가 없습니다.</td></tr>';
+          }).join('') : '<tr><td colspan="15" style="text-align:center; padding:20px; color:#94a3b8;">보유 재고가 없습니다.</td></tr>';
         } else {
-          head.innerHTML = '<tr><th>출고번호</th><th>GRID코드</th><th>출고일자</th><th>매출처</th><th>B/L No.</th><th>이력번호</th><th>브랜드</th><th>품목/부위</th><th style="text-align:right;">기준평중</th><th style="text-align:right;">출고 박스</th><th style="text-align:right;">출고 실중량(kg)</th><th style="text-align:right;">판매단가</th><th style="text-align:right;">총 매출금액</th><th>창고</th><th style="text-align:center;">작업 / 팩스발송</th></tr>';
+          head.innerHTML = '<tr><th>출고번호</th><th>출고일자</th><th>매출처</th><th>B/L No.</th><th>이력번호</th><th>브랜드</th><th>품목/부위</th><th style="text-align:right;">기준평중</th><th style="text-align:right;">출고 박스</th><th style="text-align:right;">출고 실중량(kg)</th><th style="text-align:right;">판매단가</th><th style="text-align:right;">총 매출금액</th><th>창고</th><th style="text-align:center;">작업 / 팩스발송</th><th>GRID코드(매칭확인)</th></tr>';
           const res = await fetch(`/api/outbounds?status=${currentSub}${dateQuery}`), list = await res.json();
           body.innerHTML = list.length ? list.map(o => {
             let btns = '';
             if (currentSub === 'OUT_REQUEST') {
               btns = `
                 <button class="btn btn-primary" onclick="advOut(${o.id})">확정 <i class="bi bi-arrow-right"></i></button>
+                <button class="btn btn-outline" onclick="openEditModal('OUTBOUND', ${o.id}, '${o.outbound_date}', '', '', '', '', ${o.box_qty}, ${o.weight_kg}, ${o.unit_price_kg}, '')"><i class="bi bi-pencil"></i></button>
                 <button class="btn btn-outline" style="color:#dc2626;" onclick="revertOut(${o.id}, '요청 취소(재고복구)')"><i class="bi bi-arrow-counterclockwise"></i> 요청취소</button>
               `;
             } else if (currentSub === 'OUT_CONFIRM') {
               btns = `
                 <button class="btn btn-success" onclick="advOut(${o.id})"><i class="bi bi-truck"></i> 출고완료</button>
+                <button class="btn btn-outline" onclick="openEditModal('OUTBOUND', ${o.id}, '${o.outbound_date}', '', '', '', '', ${o.box_qty}, ${o.weight_kg}, ${o.unit_price_kg}, '')"><i class="bi bi-pencil"></i></button>
                 <button class="btn btn-outline" style="color:#d97706;" onclick="revertOut(${o.id}, '이전 단계 반려')"><i class="bi bi-arrow-counterclockwise"></i> 반려</button>
               `;
             } else {
@@ -1212,7 +1263,6 @@ HTML_PAGE = """<!DOCTYPE html>
             return `
               <tr>
                 <td><strong>${o.outbound_no}</strong></td>
-                <td><span class="grid-tag">${o.grid_no || '-'}</span></td>
                 <td>${o.outbound_date}</td>
                 <td><strong>${o.customer}</strong></td>
                 <td><span class="bl-tag">${o.bl_no || '-'}</span></td>
@@ -1229,6 +1279,7 @@ HTML_PAGE = """<!DOCTYPE html>
                   <button class="btn btn-outline" style="color:#dc2626;" onclick='openPdfPreview(${JSON.stringify(o)})'><i class="bi bi-file-earmark-pdf-fill"></i> 출고요청서(팩스)</button>
                   ${btns}
                 </td>
+                <td style="text-align:center;"><span class="grid-tag">${o.grid_no || '-'}</span></td>
               </tr>
             `;
           }).join('') : '<tr><td colspan="15" style="text-align:center; padding:20px; color:#94a3b8;">대기 중인 출고 건이 없습니다.</td></tr>';
@@ -1303,7 +1354,6 @@ HTML_PAGE = """<!DOCTYPE html>
     async function revertIn(id, msg) { if(!confirm(`정말 [${msg}] 작업을 진행하시겠습니까?`)) return; const r = await fetch(`/api/inbounds/${id}/revert`,{method:'POST'}); const d = await r.json(); alert(d.message); loadData(); }
     async function revertOut(id, msg) { if(!confirm(`정말 [${msg}] 작업을 진행하시겠습니까?`)) return; const r = await fetch(`/api/outbounds/${id}/revert`,{method:'POST'}); const d = await r.json(); alert(d.message); loadData(); }
 
-    // 출하요청 등록 (기본 입고 평중 avg_box_weight 자동 적용)
     async function reqOut(lotId, gridNo, maxBox, avgBoxWeight, costPrice) {
       const cust = prompt(`[${gridNo}] 출하할 매출처 상호명을 입력하세요:`, "(주)하남돼지집"); if(!cust) return;
       const box = prompt(`출하 요청 박스 수를 입력하세요 (현재 잔여: ${maxBox} Box, 적용 평중: ${avgBoxWeight} kg/Box):`, "10"); if(!box || isNaN(box) || Number(box)<=0 || Number(box)>maxBox) { alert("박스 수가 올바르지 않습니다."); return; }
@@ -1312,7 +1362,6 @@ HTML_PAGE = """<!DOCTYPE html>
       const d = await r.json(); alert(d.message); setSubTab('OUT_REQUEST');
     }
 
-    // 출고요청서 팩스/PDF 미리보기 데이터 바인딩
     function openPdfPreview(item) {
       document.getElementById('pdf_warehouse').innerText = (item.warehouse || '보관창고') + ' 담당자 귀중';
       document.getElementById('pdf_out_date').innerText = item.outbound_date;
