@@ -1,26 +1,18 @@
-pip install fastapi uvicorn sqlalchemy pydantic jinja2
-
-python app.py
-
 import os
-from datetime import date, datetime
-from decimal import Decimal
-from typing import List, Optional
+from datetime import datetime
+from typing import List
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import (
-    Column, Integer, Float, String, Date, DateTime, Enum,
-    create_engine, desc
+    Column, Integer, Float, String, DateTime, create_engine, desc
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 import uvicorn
 
-# -----------------------------------------------------------------------------
-# 1. 데이터베이스 설정 (SQLite 자동 생성 및 연동)
-# -----------------------------------------------------------------------------
+# DB 설정 (SQLite 파일 기반)
 DB_FILE = "meaterp_local.db"
 DATABASE_URL = f"sqlite:///{DB_FILE}"
 
@@ -35,23 +27,21 @@ def get_db():
     finally:
         db.close()
 
-# -----------------------------------------------------------------------------
-# 2. ORM 테이블 모델
-# -----------------------------------------------------------------------------
+# ORM 모델 정의
 class InboundRecord(Base):
     __tablename__ = "inbounds"
     id = Column(Integer, primary_key=True, index=True)
     inbound_no = Column(String(50), unique=True, index=True)
     vendor = Column(String(100), nullable=False)
     item_name = Column(String(100), nullable=False)
-    storage_type = Column(String(20), nullable=False)  # '냉장', '냉동'
+    storage_type = Column(String(20), nullable=False)
     trace_no = Column(String(50), nullable=False, index=True)
     box_qty = Column(Integer, nullable=False)
     weight_kg = Column(Float, nullable=False)
     cost_per_kg = Column(Float, nullable=False)
     warehouse = Column(String(50), default="광주냉장창고")
     exp_date = Column(String(20), nullable=False)
-    status = Column(String(20), default="IN_REQUEST")  # IN_REQUEST -> IN_CONFIRM -> IN_DONE
+    status = Column(String(20), default="IN_REQUEST")
     created_at = Column(DateTime, default=datetime.now)
 
 class InventoryLot(Base):
@@ -82,12 +72,12 @@ class OutboundRecord(Base):
     unit_price_kg = Column(Float, nullable=False)
     exp_date = Column(String(20), nullable=False)
     warehouse = Column(String(50), nullable=False)
-    status = Column(String(20), default="OUT_REQUEST")  # OUT_REQUEST -> OUT_CONFIRM -> OUT_DONE
+    status = Column(String(20), default="OUT_REQUEST")
     created_at = Column(DateTime, default=datetime.now)
 
 Base.metadata.create_all(bind=engine)
 
-# 초기 샘플 데이터 시딩
+# 초기 샘플 데이터
 def init_sample_data():
     db = SessionLocal()
     if db.query(InventoryLot).count() == 0:
@@ -102,9 +92,6 @@ def init_sample_data():
 
 init_sample_data()
 
-# -----------------------------------------------------------------------------
-# 3. FastAPI 라우터 및 상태 전이 비즈니스 로직
-# -----------------------------------------------------------------------------
 app = FastAPI(title="MeatFlow ERP API")
 
 class InboundCreate(BaseModel):
@@ -124,12 +111,10 @@ class OutboundCreate(BaseModel):
     box_qty: int
     unit_price_kg: float
 
-# 입고 데이터 조회
 @app.get("/api/inbounds")
 def get_inbounds(status: str, db: Session = Depends(get_db)):
     return db.query(InboundRecord).filter(InboundRecord.status == status).order_by(desc(InboundRecord.id)).all()
 
-# 신규 입고요청 등록
 @app.post("/api/inbounds")
 def create_inbound(req: InboundCreate, db: Session = Depends(get_db)):
     inbound_no = f"IN-{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -150,7 +135,6 @@ def create_inbound(req: InboundCreate, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "입고요청 등록 완료", "inbound_no": inbound_no}
 
-# 입고 상태 전이 (IN_REQUEST -> IN_CONFIRM -> IN_DONE: 재고 합산)
 @app.post("/api/inbounds/{inbound_id}/advance")
 def advance_inbound(inbound_id: int, db: Session = Depends(get_db)):
     inbound = db.query(InboundRecord).filter(InboundRecord.id == inbound_id).first()
@@ -162,7 +146,6 @@ def advance_inbound(inbound_id: int, db: Session = Depends(get_db)):
         msg = "입고확정 단계로 이동되었습니다."
     elif inbound.status == "IN_CONFIRM":
         inbound.status = "IN_DONE"
-        # 실재고 로트 반영
         lot = db.query(InventoryLot).filter(
             InventoryLot.trace_no == inbound.trace_no,
             InventoryLot.warehouse == inbound.warehouse,
@@ -194,17 +177,14 @@ def advance_inbound(inbound_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": msg}
 
-# 현 재고장 (출하요청리스트) 조회
 @app.get("/api/inventory")
 def get_inventory(db: Session = Depends(get_db)):
     return db.query(InventoryLot).filter(InventoryLot.current_box_qty > 0).order_by(InventoryLot.exp_date).all()
 
-# 출고 데이터 조회
 @app.get("/api/outbounds")
 def get_outbounds(status: str, db: Session = Depends(get_db)):
     return db.query(OutboundRecord).filter(OutboundRecord.status == status).order_by(desc(OutboundRecord.id)).all()
 
-# 출하요청(재고장) -> 출고요청 생성
 @app.post("/api/outbounds/create-from-stock")
 def create_outbound_from_stock(req: OutboundCreate, db: Session = Depends(get_db)):
     lot = db.query(InventoryLot).filter(InventoryLot.id == req.lot_id).first()
@@ -235,7 +215,6 @@ def create_outbound_from_stock(req: OutboundCreate, db: Session = Depends(get_db
     db.commit()
     return {"message": "출고요청 등록 완료", "outbound_no": outbound_no}
 
-# 출고 상태 전이 (OUT_REQUEST -> OUT_CONFIRM -> OUT_DONE: 재고 차감)
 @app.post("/api/outbounds/{outbound_id}/advance")
 def advance_outbound(outbound_id: int, db: Session = Depends(get_db)):
     outbound = db.query(OutboundRecord).filter(OutboundRecord.id == outbound_id).first()
@@ -247,7 +226,6 @@ def advance_outbound(outbound_id: int, db: Session = Depends(get_db)):
         msg = "출고확정 단계로 이동되었습니다."
     elif outbound.status == "OUT_CONFIRM":
         outbound.status = "OUT_DONE"
-        # 실재고 차감 처리
         lot = db.query(InventoryLot).filter(InventoryLot.id == outbound.lot_id).first()
         if lot:
             lot.current_box_qty = max(0, lot.current_box_qty - outbound.box_qty)
@@ -259,395 +237,126 @@ def advance_outbound(outbound_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": msg}
 
-# -----------------------------------------------------------------------------
-# 4. 실시간 통합 대시보드 HTML 프론트엔드 서빙
-# -----------------------------------------------------------------------------
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MeatFlow ERP - 실운영 시스템</title>
+  <title>MeatFlow ERP</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
   <style>
-    :root {
-      --primary: #2563eb;
-      --sidebar-bg: #0f172a;
-      --bg-body: #f8fafc;
-      --card-bg: #ffffff;
-      --border: #e2e8f0;
-      --text: #1e293b;
-      --muted: #64748b;
-    }
+    :root { --primary: #2563eb; --sidebar: #0f172a; --bg: #f8fafc; --border: #e2e8f0; }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Pretendard", sans-serif; }
-    body { background: var(--bg-body); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
-    aside { width: 240px; background: var(--sidebar-bg); color: #94a3b8; display: flex; flex-direction: column; flex-shrink: 0; }
-    .brand { padding: 20px; font-size: 1.15rem; font-weight: 700; color: #fff; border-bottom: 1px solid #1e293b; display: flex; align-items: center; gap: 8px; }
-    .brand i { color: #38bdf8; }
-    .nav-item { padding: 12px 18px; color: #94a3b8; font-size: 0.9rem; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+    body { background: var(--bg); display: flex; height: 100vh; overflow: hidden; }
+    aside { width: 240px; background: var(--sidebar); color: #94a3b8; display: flex; flex-direction: column; }
+    .brand { padding: 20px; font-size: 1.15rem; font-weight: 700; color: #fff; border-bottom: 1px solid #1e293b; }
+    .nav-item { padding: 12px 18px; color: #94a3b8; cursor: pointer; display: flex; align-items: center; gap: 8px; }
     .nav-item:hover, .nav-item.active { background: #1e293b; color: #38bdf8; font-weight: 600; }
     main { flex-grow: 1; display: flex; flex-direction: column; height: 100vh; overflow-y: auto; }
     header { background: #fff; border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; justify-content: space-between; align-items: center; }
-    .page-title { font-size: 1.25rem; font-weight: 700; }
-    .content { padding: 24px 28px; display: flex; flex-direction: column; gap: 18px; }
+    .content { padding: 24px 28px; display: flex; flex-direction: column; gap: 16px; }
     .sub-tabs { display: flex; gap: 6px; background: #e2e8f0; padding: 4px; border-radius: 8px; width: fit-content; }
-    .sub-tab { padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; color: #475569; cursor: pointer; }
-    .sub-tab.active { background: #fff; color: var(--primary); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .sub-tab { padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+    .sub-tab.active { background: #fff; color: var(--primary); }
     .table-card { background: #fff; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    .table-header { padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
     table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-    th { background: #f8fafc; color: var(--muted); font-weight: 600; padding: 12px 16px; border-bottom: 1px solid var(--border); text-align: left; }
-    td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    tr:hover td { background: #f8fafc; }
-    .btn { padding: 6px 12px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
-    .btn-primary { background: var(--primary); color: white; }
-    .btn-success { background: #16a34a; color: white; }
-    .btn-warning { background: #d97706; color: white; }
-    .badge { padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
-    .badge-chilled { background: #e0f2fe; color: #0284c7; }
-    .badge-frozen { background: #e0e7ff; color: #4f46e5; }
-    /* 모달 */
+    th { background: #f8fafc; color: #64748b; padding: 12px 16px; border-bottom: 1px solid var(--border); text-align: left; }
+    td { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .btn { padding: 6px 12px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; border: none; cursor: pointer; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-success { background: #16a34a; color: #fff; }
+    .btn-warning { background: #d97706; color: #fff; }
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; align-items: center; justify-content: center; }
-    .modal-box { background: white; border-radius: 10px; width: 500px; padding: 24px; }
-    .form-group { margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; font-weight: 600; }
-    .form-control { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.88rem; }
+    .modal-box { background: #fff; border-radius: 10px; width: 480px; padding: 24px; }
+    .form-group { margin-bottom: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 0.82rem; font-weight: 600; }
+    .form-control { padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
   </style>
 </head>
 <body>
   <aside>
-    <div class="brand"><i class="bi bi-box-seam-fill"></i> MeatFlow ERP</div>
+    <div class="brand"><i class="bi bi-box-seam-fill" style="color:#38bdf8;"></i> MeatFlow ERP</div>
     <div class="nav-item active" onclick="switchMainTab('INBOUND', this)"><i class="bi bi-box-arrow-in-down"></i> 입고 관리</div>
     <div class="nav-item" onclick="switchMainTab('OUTBOUND', this)"><i class="bi bi-box-arrow-up"></i> 출고 관리 (재고장)</div>
   </aside>
-
   <main>
     <header>
-      <div class="page-title" id="pageTitle">입고 프로세스 관리</div>
-      <div id="headerActions">
-        <button class="btn btn-primary" onclick="openInboundModal()"><i class="bi bi-plus-lg"></i> 신규 입고요청 등록</button>
-      </div>
+      <h2 id="pageTitle" style="font-size:1.2rem;">입고 프로세스 관리</h2>
+      <div id="headerActions"><button class="btn btn-primary" onclick="openInboundModal()">+ 신규 입고요청</button></div>
     </header>
-
     <div class="content">
       <div class="sub-tabs" id="subTabs"></div>
       <div class="table-card">
-        <div class="table-header" id="tableHeader">목록</div>
-        <div style="overflow-x: auto;">
-          <table id="mainTable">
-            <thead id="tableHead"></thead>
-            <tbody id="tableBody"></tbody>
-          </table>
-        </div>
+        <table>
+          <thead id="tableHead"></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
       </div>
     </div>
   </main>
-
-  <!-- 입고 등록 모달 -->
   <div class="modal-overlay" id="inboundModal">
     <div class="modal-box">
-      <h3 style="margin-bottom: 16px;">신규 축산물 입고요청 등록</h3>
-      <div class="form-group">
-        <label>매입처 상호</label>
-        <input type="text" id="in_vendor" class="form-control" value="(주)글로벌미트" />
-      </div>
-      <div class="form-group">
-        <label>품목 및 부위명</label>
-        <input type="text" id="in_item" class="form-control" value="돼지 삼겹살(올리멜)" />
-      </div>
-      <div class="form-group">
-        <label>보관 형태</label>
-        <select id="in_storage" class="form-control">
-          <option value="냉장">냉장 (Chilled)</option>
-          <option value="냉동">냉동 (Frozen)</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>축산물 이력번호 (12자리)</label>
-        <input type="text" id="in_trace" class="form-control" value="802410290114" />
-      </div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-        <div class="form-group">
-          <label>입고 박스 수(Box)</label>
-          <input type="number" id="in_box" class="form-control" value="50" />
-        </div>
-        <div class="form-group">
-          <label>총 실중량(kg)</label>
-          <input type="number" step="0.1" id="in_weight" class="form-control" value="1020.5" />
-        </div>
-      </div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-        <div class="form-group">
-          <label>kg당 매입단가(원)</label>
-          <input type="number" id="in_cost" class="form-control" value="8400" />
-        </div>
-        <div class="form-group">
-          <label>유통기한</label>
-          <input type="date" id="in_exp" class="form-control" value="2026-09-15" />
-        </div>
-      </div>
-      <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;">
-        <button class="btn" style="background:#e2e8f0;" onclick="closeModal()">취소</button>
-        <button class="btn btn-primary" onclick="submitInbound()">입고요청 저장</button>
-      </div>
+      <h3 style="margin-bottom:12px;">신규 입고요청</h3>
+      <div class="form-group"><label>매입처</label><input type="text" id="in_vendor" class="form-control" value="(주)글로벌미트" /></div>
+      <div class="form-group"><label>품목명</label><input type="text" id="in_item" class="form-control" value="돼지 삼겹살(올리멜)" /></div>
+      <div class="form-group"><label>보관형태</label><select id="in_storage" class="form-control"><option>냉장</option><option>냉동</option></select></div>
+      <div class="form-group"><label>이력번호</label><input type="text" id="in_trace" class="form-control" value="802410290114" /></div>
+      <div style="display:flex; gap:10px;"><div class="form-group" style="flex:1;"><label>박스</label><input type="number" id="in_box" class="form-control" value="50" /></div><div class="form-group" style="flex:1;"><label>중량(kg)</label><input type="number" step="0.1" id="in_weight" class="form-control" value="1020.5" /></div></div>
+      <div style="display:flex; gap:10px;"><div class="form-group" style="flex:1;"><label>단가/kg</label><input type="number" id="in_cost" class="form-control" value="8400" /></div><div class="form-group" style="flex:1;"><label>유통기한</label><input type="date" id="in_exp" class="form-control" value="2026-09-15" /></div></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;"><button class="btn" style="background:#e2e8f0;" onclick="closeModal()">취소</button><button class="btn btn-primary" onclick="submitInbound()">저장</button></div>
     </div>
   </div>
-
   <script>
-    let currentMain = 'INBOUND';
-    let currentSub = 'IN_REQUEST';
-
+    let currentMain = 'INBOUND', currentSub = 'IN_REQUEST';
     function switchMainTab(tab, el) {
       currentMain = tab;
       document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
       el.classList.add('active');
-
-      if (tab === 'INBOUND') {
-        currentSub = 'IN_REQUEST';
-        document.getElementById('pageTitle').innerText = '입고 프로세스 관리';
-        document.getElementById('headerActions').innerHTML = '<button class="btn btn-primary" onclick="openInboundModal()"><i class="bi bi-plus-lg"></i> 신규 입고요청 등록</button>';
-      } else {
-        currentSub = 'OUT_STOCK';
-        document.getElementById('pageTitle').innerText = '출고 프로세스 관리 (현 재고장 연동)';
-        document.getElementById('headerActions').innerHTML = '';
-      }
-      renderSubTabs();
-      loadData();
+      currentSub = tab === 'INBOUND' ? 'IN_REQUEST' : 'OUT_STOCK';
+      document.getElementById('pageTitle').innerText = tab === 'INBOUND' ? '입고 프로세스 관리' : '출고 프로세스 관리 (현 재고장 연동)';
+      document.getElementById('headerActions').innerHTML = tab === 'INBOUND' ? '<button class="btn btn-primary" onclick="openInboundModal()">+ 신규 입고요청</button>' : '';
+      renderSubTabs(); loadData();
     }
-
     function renderSubTabs() {
-      const container = document.getElementById('subTabs');
-      container.innerHTML = '';
-      if (currentMain === 'INBOUND') {
-        const steps = [
-          { key: 'IN_REQUEST', name: '1. 입고요청리스트' },
-          { key: 'IN_CONFIRM', name: '2. 입고확정리스트' },
-          { key: 'IN_DONE', name: '3. 입고리스트(완료)' }
-        ];
-        steps.forEach(s => {
-          const active = currentSub === s.key ? 'active' : '';
-          container.innerHTML += `<div class="sub-tab ${active}" onclick="setSubTab('${s.key}')">${s.name}</div>`;
-        });
-      } else {
-        const steps = [
-          { key: 'OUT_STOCK', name: '1. 출하요청리스트 (현 재고장)' },
-          { key: 'OUT_REQUEST', name: '2. 출고요청리스트' },
-          { key: 'OUT_CONFIRM', name: '3. 출고확정리스트' },
-          { key: 'OUT_DONE', name: '4. 출고리스트(완료)' }
-        ];
-        steps.forEach(s => {
-          const active = currentSub === s.key ? 'active' : '';
-          container.innerHTML += `<div class="sub-tab ${active}" onclick="setSubTab('${s.key}')">${s.name}</div>`;
-        });
-      }
+      const container = document.getElementById('subTabs'); container.innerHTML = '';
+      const steps = currentMain === 'INBOUND' ? [{k:'IN_REQUEST',n:'1. 입고요청'},{k:'IN_CONFIRM',n:'2. 입고확정'},{k:'IN_DONE',n:'3. 입고완료'}] : [{k:'OUT_STOCK',n:'1. 출하요청(재고장)'},{k:'OUT_REQUEST',n:'2. 출고요청'},{k:'OUT_CONFIRM',n:'3. 출고확정'},{k:'OUT_DONE',n:'4. 출고완료'}];
+      steps.forEach(s => { container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`; });
     }
-
-    function setSubTab(sub) {
-      currentSub = sub;
-      renderSubTabs();
-      loadData();
-    }
-
+    function setSubTab(k) { currentSub = k; renderSubTabs(); loadData(); }
     async function loadData() {
-      const head = document.getElementById('tableHead');
-      const body = document.getElementById('tableBody');
-      body.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px;">데이터 로딩 중...</td></tr>';
-
+      const head = document.getElementById('tableHead'), body = document.getElementById('tableBody');
+      body.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:15px;">로딩 중...</td></tr>';
       if (currentMain === 'INBOUND') {
-        head.innerHTML = `
-          <tr>
-            <th>전표번호</th>
-            <th>매입처</th>
-            <th>품목명</th>
-            <th>보관</th>
-            <th>이력번호</th>
-            <th style="text-align:right;">박스 수</th>
-            <th style="text-align:right;">실중량(kg)</th>
-            <th>유통기한</th>
-            <th style="text-align:center;">상태 처리</th>
-          </tr>
-        `;
-        const res = await fetch(`/api/inbounds?status=${currentSub}`);
-        const list = await res.json();
-        body.innerHTML = '';
-        if (list.length === 0) {
-          body.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:30px; color:#94a3b8;">대기 중인 전표가 없습니다.</td></tr>';
-          return;
-        }
-        list.forEach(item => {
-          let btn = '';
-          if (currentSub === 'IN_REQUEST') {
-            btn = `<button class="btn btn-primary" onclick="advanceInbound(${item.id})">입고확정 <i class="bi bi-arrow-right"></i></button>`;
-          } else if (currentSub === 'IN_CONFIRM') {
-            btn = `<button class="btn btn-success" onclick="advanceInbound(${item.id})"><i class="bi bi-check-lg"></i> 입고완료(재고반영)</button>`;
-          } else {
-            btn = `<span class="badge" style="background:#dcfce7; color:#15803d;">입고 완료됨</span>`;
-          }
-          body.innerHTML += `
-            <tr>
-              <td><strong>${item.inbound_no}</strong></td>
-              <td>${item.vendor}</td>
-              <td>${item.item_name}</td>
-              <td><span class="badge ${item.storage_type === '냉장' ? 'badge-chilled' : 'badge-frozen'}">${item.storage_type}</span></td>
-              <td><code>${item.trace_no}</code></td>
-              <td style="text-align:right; font-weight:600;">${item.box_qty} Box</td>
-              <td style="text-align:right; font-weight:600;">${item.weight_kg.toLocaleString()} kg</td>
-              <td>${item.exp_date}</td>
-              <td style="text-align:center;">${btn}</td>
-            </tr>
-          `;
-        });
+        head.innerHTML = '<tr><th>전표번호</th><th>매입처</th><th>품목명</th><th>보관</th><th>이력번호</th><th>박스</th><th>중량(kg)</th><th>처리</th></tr>';
+        const res = await fetch(`/api/inbounds?status=${currentSub}`), list = await res.json();
+        body.innerHTML = list.length ? list.map(i => `<tr><td><strong>${i.inbound_no}</strong></td><td>${i.vendor}</td><td>${i.item_name}</td><td>${i.storage_type}</td><td><code>${i.trace_no}</code></td><td>${i.box_qty} Box</td><td>${i.weight_kg} kg</td><td>${currentSub==='IN_REQUEST'?`<button class="btn btn-primary" onclick="advIn(${i.id})">확정</button>`:currentSub==='IN_CONFIRM'?`<button class="btn btn-success" onclick="advIn(${i.id})">입고완료</button>`:'완료됨'}</td></tr>`).join('') : '<tr><td colspan="8" style="text-align:center; padding:20px; color:#94a3b8;">내역 없음</td></tr>';
       } else {
         if (currentSub === 'OUT_STOCK') {
-          head.innerHTML = `
-            <tr>
-              <th>로트 ID</th>
-              <th>품목명</th>
-              <th>보관</th>
-              <th>이력번호</th>
-              <th style="text-align:right;">보유 박스</th>
-              <th style="text-align:right;">보유 중량(kg)</th>
-              <th>보관창고</th>
-              <th>유통기한</th>
-              <th style="text-align:center;">출하 등록</th>
-            </tr>
-          `;
-          const res = await fetch('/api/inventory');
-          const list = await res.json();
-          body.innerHTML = '';
-          if (list.length === 0) {
-            body.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:30px; color:#94a3b8;">보유 재고가 없습니다.</td></tr>';
-            return;
-          }
-          list.forEach(lot => {
-            body.innerHTML += `
-              <tr>
-                <td><strong>#${lot.id}</strong></td>
-                <td>${lot.item_name}</td>
-                <td><span class="badge ${lot.storage_type === '냉장' ? 'badge-chilled' : 'badge-frozen'}">${lot.storage_type}</span></td>
-                <td><code>${lot.trace_no}</code></td>
-                <td style="text-align:right; font-weight:600;">${lot.current_box_qty} Box</td>
-                <td style="text-align:right; font-weight:600;">${lot.current_weight_kg.toLocaleString()} kg</td>
-                <td>${lot.warehouse}</td>
-                <td>${lot.exp_date}</td>
-                <td style="text-align:center;">
-                  <button class="btn btn-warning" onclick="requestOutbound(${lot.id}, ${lot.current_box_qty})"><i class="bi bi-cart-plus"></i> 출하요청</button>
-                </td>
-              </tr>
-            `;
-          });
+          head.innerHTML = '<tr><th>ID</th><th>품목명</th><th>보관</th><th>이력번호</th><th>보유박스</th><th>보유중량(kg)</th><th>창고</th><th>출하</th></tr>';
+          const res = await fetch('/api/inventory'), list = await res.json();
+          body.innerHTML = list.length ? list.map(l => `<tr><td>#${l.id}</td><td>${l.item_name}</td><td>${l.storage_type}</td><td><code>${l.trace_no}</code></td><td>${l.current_box_qty} Box</td><td>${l.current_weight_kg} kg</td><td>${l.warehouse}</td><td><button class="btn btn-warning" onclick="reqOut(${l.id},${l.current_box_qty})">출하요청</button></td></tr>`).join('') : '<tr><td colspan="8" style="text-align:center; padding:20px; color:#94a3b8;">재고 없음</td></tr>';
         } else {
-          head.innerHTML = `
-            <tr>
-              <th>출고번호</th>
-              <th>매출처</th>
-              <th>품목명</th>
-              <th>이력번호</th>
-              <th style="text-align:right;">출고 박스</th>
-              <th style="text-align:right;">출고 중량(kg)</th>
-              <th style="text-align:right;">판매 단가(kg)</th>
-              <th>유통기한</th>
-              <th style="text-align:center;">상태 처리</th>
-            </tr>
-          `;
-          const res = await fetch(`/api/outbounds?status=${currentSub}`);
-          const list = await res.json();
-          body.innerHTML = '';
-          if (list.length === 0) {
-            body.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:30px; color:#94a3b8;">대기 중인 출고 건이 없습니다.</td></tr>';
-            return;
-          }
-          list.forEach(item => {
-            let btn = '';
-            if (currentSub === 'OUT_REQUEST') {
-              btn = `<button class="btn btn-primary" onclick="advanceOutbound(${item.id})">출고확정 <i class="bi bi-arrow-right"></i></button>`;
-            } else if (currentSub === 'OUT_CONFIRM') {
-              btn = `<button class="btn btn-success" onclick="advanceOutbound(${item.id})"><i class="bi bi-truck"></i> 출고완료(재고차감)</button>`;
-            } else {
-              btn = `<span class="badge" style="background:#dbeafe; color:#1d4ed8;">출고 완료됨</span>`;
-            }
-            body.innerHTML += `
-              <tr>
-                <td><strong>${item.outbound_no}</strong></td>
-                <td>${item.customer}</td>
-                <td>${item.item_name}</td>
-                <td><code>${item.trace_no}</code></td>
-                <td style="text-align:right; font-weight:600;">${item.box_qty} Box</td>
-                <td style="text-align:right; font-weight:600;">${item.weight_kg.toLocaleString()} kg</td>
-                <td style="text-align:right;">${item.unit_price_kg.toLocaleString()}원</td>
-                <td>${item.exp_date}</td>
-                <td style="text-align:center;">${btn}</td>
-              </tr>
-            `;
-          });
+          head.innerHTML = '<tr><th>출고번호</th><th>매출처</th><th>품목명</th><th>이력번호</th><th>박스</th><th>중량(kg)</th><th>단가</th><th>처리</th></tr>';
+          const res = await fetch(`/api/outbounds?status=${currentSub}`), list = await res.json();
+          body.innerHTML = list.length ? list.map(o => `<tr><td><strong>${o.outbound_no}</strong></td><td>${o.customer}</td><td>${o.item_name}</td><td><code>${o.trace_no}</code></td><td>${o.box_qty} Box</td><td>${o.weight_kg} kg</td><td>${o.unit_price_kg}원</td><td>${currentSub==='OUT_REQUEST'?`<button class="btn btn-primary" onclick="advOut(${o.id})">확정</button>`:currentSub==='OUT_CONFIRM'?`<button class="btn btn-success" onclick="advOut(${o.id})">출고완료</button>`:'완료됨'}</td></tr>`).join('') : '<tr><td colspan="8" style="text-align:center; padding:20px; color:#94a3b8;">내역 없음</td></tr>';
         }
       }
     }
-
-    async function advanceInbound(id) {
-      const res = await fetch(`/api/inbounds/${id}/advance`, { method: 'POST' });
-      const data = await res.json();
-      alert(data.message);
-      loadData();
+    async function advIn(id) { const r = await fetch(`/api/inbounds/${id}/advance`,{method:'POST'}); const d = await r.json(); alert(d.message); loadData(); }
+    async function advOut(id) { const r = await fetch(`/api/outbounds/${id}/advance`,{method:'POST'}); const d = await r.json(); alert(d.message); loadData(); }
+    async function reqOut(lotId, maxBox) {
+      const cust = prompt("매출처명 입력:", "(주)신규거래처"); if(!cust) return;
+      const box = prompt(`박스 수 (보유: ${maxBox}):`, "10"); if(!box) return;
+      const r = await fetch('/api/outbounds/create-from-stock', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({lot_id:lotId, customer:cust, box_qty:Number(box), unit_price_kg:11000})});
+      const d = await r.json(); alert(d.message); setSubTab('OUT_REQUEST');
     }
-
-    async function advanceOutbound(id) {
-      const res = await fetch(`/api/outbounds/${id}/advance`, { method: 'POST' });
-      const data = await res.json();
-      alert(data.message);
-      loadData();
-    }
-
-    async function requestOutbound(lotId, maxBox) {
-      const customer = prompt("출하할 거래처 상호명을 입력하세요:", "(주)신규식당");
-      if (!customer) return;
-      const box = prompt(`출하 요청 박스 수를 입력하세요 (보유: ${maxBox} Box):`, "10");
-      if (!box || isNaN(box) || Number(box) <= 0 || Number(box) > maxBox) {
-        alert("올바른 박스 수량을 입력하세요.");
-        return;
-      }
-      const price = prompt("kg당 판매단가(원)를 입력하세요:", "11500");
-      if (!price) return;
-
-      const res = await fetch('/api/outbounds/create-from-stock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lot_id: lotId, customer: customer, box_qty: Number(box), unit_price_kg: Number(price) })
-      });
-      const data = await res.json();
-      alert(data.message);
-      setSubTab('OUT_REQUEST');
-    }
-
     function openInboundModal() { document.getElementById('inboundModal').style.display = 'flex'; }
     function closeModal() { document.getElementById('inboundModal').style.display = 'none'; }
-
     async function submitInbound() {
-      const payload = {
-        vendor: document.getElementById('in_vendor').value,
-        item_name: document.getElementById('in_item').value,
-        storage_type: document.getElementById('in_storage').value,
-        trace_no: document.getElementById('in_trace').value,
-        box_qty: Number(document.getElementById('in_box').value),
-        weight_kg: Number(document.getElementById('in_weight').value),
-        cost_per_kg: Number(document.getElementById('in_cost').value),
-        warehouse: "광주냉장창고",
-        exp_date: document.getElementById('in_exp').value
-      };
-      const res = await fetch('/api/inbounds', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      alert(data.message);
-      closeModal();
-      setSubTab('IN_REQUEST');
+      const p = { vendor: document.getElementById('in_vendor').value, item_name: document.getElementById('in_item').value, storage_type: document.getElementById('in_storage').value, trace_no: document.getElementById('in_trace').value, box_qty: Number(document.getElementById('in_box').value), weight_kg: Number(document.getElementById('in_weight').value), cost_per_kg: Number(document.getElementById('in_cost').value), warehouse: "광주냉장창고", exp_date: document.getElementById('in_exp').value };
+      const r = await fetch('/api/inbounds', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(p)});
+      const d = await r.json(); alert(d.message); closeModal(); setSubTab('IN_REQUEST');
     }
-
-    window.addEventListener('DOMContentLoaded', () => {
-      renderSubTabs();
-      loadData();
-    });
+    window.addEventListener('DOMContentLoaded', () => { renderSubTabs(); loadData(); });
   </script>
 </body>
 </html>
@@ -658,4 +367,5 @@ def serve_dashboard():
     return HTML_PAGE
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
