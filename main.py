@@ -68,6 +68,7 @@ class InboundRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     inbound_no = Column(String(50), unique=True, index=True)
     inbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
+    processed_date = Column(String(20), nullable=True) # 클레임/처리일자
     vendor = Column(String(100), nullable=False)
     bl_no = Column(String(50), nullable=True)
     trace_no = Column(String(50), nullable=False, index=True)
@@ -82,7 +83,8 @@ class InboundRecord(Base):
     warehouse = Column(String(50), default="광주냉장창고")
     exp_date = Column(String(20), nullable=False)
     is_weighed = Column(String(10), default="Y")
-    status = Column(String(20), default="IN_REQUEST")
+    claim_reason = Column(String(255), nullable=True) # 클레임 상세 사유
+    status = Column(String(20), default="IN_REQUEST") # IN_REQUEST, IN_CONFIRM, IN_DONE, IN_CLAIM
     grid_no = Column(String(50), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -90,6 +92,7 @@ class InventoryLot(Base):
     __tablename__ = "inventory_lots"
     id = Column(Integer, primary_key=True, index=True)
     sku_code = Column(String(50), nullable=False)
+    inbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d")) # 최초 입고일자
     bl_no = Column(String(50), nullable=True)
     trace_no = Column(String(50), nullable=False, index=True)
     brand = Column(String(50), nullable=True)
@@ -112,7 +115,9 @@ class OutboundRecord(Base):
     __tablename__ = "outbounds"
     id = Column(Integer, primary_key=True, index=True)
     outbound_no = Column(String(50), unique=True, index=True)
+    inbound_date = Column(String(20), nullable=True)  # 원본 입고일자
     outbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
+    processed_date = Column(String(20), nullable=True) # 클레임/처리일자
     lot_id = Column(Integer, nullable=False)
     customer = Column(String(100), nullable=False)
     bl_no = Column(String(50), nullable=True)
@@ -129,7 +134,8 @@ class OutboundRecord(Base):
     exp_date = Column(String(20), nullable=False)
     warehouse = Column(String(50), nullable=False)
     is_weighed = Column(String(10), default="Y")
-    status = Column(String(20), default="OUT_REQUEST")
+    claim_reason = Column(String(255), nullable=True) # 클레임 사유
+    status = Column(String(20), default="OUT_REQUEST") # OUT_REQUEST, OUT_CONFIRM, OUT_DONE, OUT_CLAIM
     grid_no = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -176,8 +182,8 @@ def init_sample_data():
 
     if db.query(InventoryLot).count() == 0:
         lots = [
-            InventoryLot(grid_no="GRID-738201", sku_code="PK-CAN-01", bl_no="ONEYVAN6948200", trace_no="802410290114", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장", initial_box_qty=50, initial_weight_kg=1020.5, avg_box_weight=20.41, current_box_qty=45, current_weight_kg=918.45, cost_per_kg=8400, warehouse="광주냉장창고", exp_date="2026-09-02", is_weighed="Y"),
-            InventoryLot(grid_no="GRID-910482", sku_code="BF-USA-05", bl_no="MAEU9201948201", trace_no="100392019482", brand="엑셀", item_name="우육(소)", cut_name="척아이롤", storage_type="냉동", initial_box_qty=150, initial_weight_kg=3050.0, avg_box_weight=20.33, current_box_qty=120, current_weight_kg=2439.6, cost_per_kg=14500, warehouse="용인냉동센터", exp_date="2027-04-15", is_weighed="N")
+            InventoryLot(grid_no="GRID-738201", sku_code="PK-CAN-01", inbound_date="2026-08-10", bl_no="ONEYVAN6948200", trace_no="802410290114", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장", initial_box_qty=50, initial_weight_kg=1020.5, avg_box_weight=20.41, current_box_qty=45, current_weight_kg=918.45, cost_per_kg=8400, warehouse="광주냉장창고", exp_date="2026-09-02", is_weighed="Y"),
+            InventoryLot(grid_no="GRID-910482", sku_code="BF-USA-05", inbound_date="2026-08-12", bl_no="MAEU9201948201", trace_no="100392019482", brand="엑셀", item_name="우육(소)", cut_name="척아이롤", storage_type="냉동", initial_box_qty=150, initial_weight_kg=3050.0, avg_box_weight=20.33, current_box_qty=120, current_weight_kg=2439.6, cost_per_kg=14500, warehouse="용인냉동센터", exp_date="2027-04-15", is_weighed="N")
         ]
         db.add_all(lots)
     db.commit()
@@ -236,6 +242,10 @@ class UpdateInbound(BaseModel):
     cost_per_kg: float
     warehouse: str
     is_weighed: str
+
+class ClaimRegister(BaseModel):
+    reason: str
+    processed_date: Optional[str] = None
 
 class OutboundCreate(BaseModel):
     outbound_date: Optional[str] = None
@@ -331,7 +341,7 @@ def delete_cut_master(cut_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "부위 마스터가 삭제되었습니다."}
 
-# 입고 API (계근 토글 포함)
+# 입고 API (클레임 등록 및 조회 포함)
 @app.get("/api/inbounds")
 def get_inbounds(
     status: str,
@@ -368,6 +378,28 @@ def create_inbound(req: InboundCreate, db: Session = Depends(get_db)):
     db.commit()
     return {"message": f"입고요청 등록 완료 ({grid_no})", "inbound_no": inbound_no}
 
+@app.post("/api/inbounds/{inbound_id}/claim")
+def register_inbound_claim(inbound_id: int, req: ClaimRegister, db: Session = Depends(get_db)):
+    inbound = db.query(InboundRecord).filter(InboundRecord.id == inbound_id).first()
+    if not inbound: raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
+    
+    # 이미 입고완료된 경우 실재고에서 차감
+    if inbound.status == "IN_DONE":
+        lot = db.query(InventoryLot).filter(
+            InventoryLot.trace_no == inbound.trace_no,
+            InventoryLot.warehouse == inbound.warehouse,
+            InventoryLot.exp_date == inbound.exp_date
+        ).first()
+        if lot:
+            lot.current_box_qty = max(0, lot.current_box_qty - inbound.box_qty)
+            lot.current_weight_kg = max(0.0, round(lot.current_weight_kg - inbound.weight_kg, 2))
+
+    inbound.status = "IN_CLAIM"
+    inbound.claim_reason = req.reason
+    inbound.processed_date = req.processed_date if req.processed_date else datetime.now().strftime("%Y-%m-%d")
+    db.commit()
+    return {"message": f"입고 클레임 등록이 완료되었습니다. (처리일자: {inbound.processed_date})"}
+
 @app.post("/api/inbounds/{inbound_id}/toggle-weigh")
 def toggle_inbound_weigh(inbound_id: int, db: Session = Depends(get_db)):
     inbound = db.query(InboundRecord).filter(InboundRecord.id == inbound_id).first()
@@ -380,7 +412,8 @@ def toggle_inbound_weigh(inbound_id: int, db: Session = Depends(get_db)):
 def update_inbound(inbound_id: int, req: UpdateInbound, db: Session = Depends(get_db)):
     inbound = db.query(InboundRecord).filter(InboundRecord.id == inbound_id).first()
     if not inbound: raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
-    if inbound.status == "IN_DONE": raise HTTPException(status_code=400, detail="입고완료 전표는 [작업취소] 후 수정해야 합니다.")
+    if inbound.status in ["IN_DONE", "IN_CLAIM"]:
+        raise HTTPException(status_code=400, detail="완료 또는 클레임 상태의 전표는 [작업취소] 후 수정해야 합니다.")
     inbound.inbound_date = req.inbound_date
     inbound.bl_no = req.bl_no
     inbound.brand = req.brand
@@ -404,6 +437,7 @@ def advance_inbound(inbound_id: int, db: Session = Depends(get_db)):
         msg = "입고확정 단계로 이동되었습니다."
     elif inbound.status == "IN_CONFIRM":
         inbound.status = "IN_DONE"
+        inbound.processed_date = datetime.now().strftime("%Y-%m-%d")
         avg_w = round(inbound.weight_kg / inbound.box_qty, 2) if inbound.box_qty > 0 else 0.0
         lot = db.query(InventoryLot).filter(
             InventoryLot.trace_no == inbound.trace_no,
@@ -422,8 +456,9 @@ def advance_inbound(inbound_id: int, db: Session = Depends(get_db)):
             sku = "SKU-" + inbound.trace_no[:6]
             new_lot = InventoryLot(
                 grid_no=inbound.grid_no or generate_random_grid(),
-                sku_code=sku, bl_no=inbound.bl_no, trace_no=inbound.trace_no, brand=inbound.brand,
-                item_name=inbound.item_name, cut_name=inbound.cut_name, storage_type=inbound.storage_type,
+                sku_code=sku, inbound_date=inbound.inbound_date, bl_no=inbound.bl_no,
+                trace_no=inbound.trace_no, brand=inbound.brand, item_name=inbound.item_name,
+                cut_name=inbound.cut_name, storage_type=inbound.storage_type,
                 initial_box_qty=inbound.box_qty, initial_weight_kg=inbound.weight_kg, avg_box_weight=avg_w,
                 current_box_qty=inbound.box_qty, current_weight_kg=inbound.weight_kg,
                 cost_per_kg=inbound.cost_per_kg, warehouse=inbound.warehouse,
@@ -459,6 +494,10 @@ def revert_inbound(inbound_id: int, db: Session = Depends(get_db)):
             lot.current_weight_kg = max(0.0, round(lot.current_weight_kg - inbound.weight_kg, 2))
         inbound.status = "IN_CONFIRM"
         msg = "입고완료가 취소되어 실재고가 원복되었습니다."
+    elif inbound.status == "IN_CLAIM":
+        inbound.status = "IN_DONE"
+        inbound.claim_reason = None
+        msg = "입고 클레임이 취소되어 입고완료 상태로 복구되었습니다."
     else:
         msg = "처리할 수 없는 상태입니다."
     db.commit()
@@ -508,7 +547,7 @@ async def upload_inbound_excel(file: UploadFile = File(...), db: Session = Depen
         db.rollback()
         raise HTTPException(status_code=500, detail=f"엑셀 처리 오류: {str(e)}")
 
-# 현 재고장 & 출고 관리 (계근 토글 포함)
+# 현 재고장 & 출고 관리 (클레임 등록 및 조회 포함)
 @app.get("/api/inventory")
 def get_inventory(db: Session = Depends(get_db)):
     return db.query(InventoryLot).filter(InventoryLot.current_box_qty > 0).order_by(InventoryLot.exp_date).all()
@@ -565,7 +604,8 @@ def create_outbound_from_stock(req: OutboundCreate, db: Session = Depends(get_db
     out_date = req.outbound_date if req.outbound_date else datetime.now().strftime("%Y-%m-%d")
     total = round(calc_weight * req.unit_price_kg)
     outbound = OutboundRecord(
-        outbound_no=outbound_no, grid_no=lot.grid_no, outbound_date=out_date, lot_id=lot.id, customer=req.customer,
+        outbound_no=outbound_no, grid_no=lot.grid_no, inbound_date=lot.inbound_date,
+        outbound_date=out_date, lot_id=lot.id, customer=req.customer,
         bl_no=lot.bl_no, trace_no=lot.trace_no, brand=lot.brand, item_name=lot.item_name,
         cut_name=lot.cut_name, storage_type=lot.storage_type, box_qty=req.box_qty,
         avg_box_weight=avg_weight, weight_kg=calc_weight, unit_price_kg=req.unit_price_kg, total_amount=total,
@@ -574,6 +614,17 @@ def create_outbound_from_stock(req: OutboundCreate, db: Session = Depends(get_db
     db.add(outbound)
     db.commit()
     return {"message": f"출고요청 등록 완료 (평중 {avg_weight}kg 기준 {calc_weight}kg 적용, 재고장 즉시 차감됨)", "outbound_no": outbound_no}
+
+@app.post("/api/outbounds/{outbound_id}/claim")
+def register_outbound_claim(outbound_id: int, req: ClaimRegister, db: Session = Depends(get_db)):
+    outbound = db.query(OutboundRecord).filter(OutboundRecord.id == outbound_id).first()
+    if not outbound: raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
+
+    outbound.status = "OUT_CLAIM"
+    outbound.claim_reason = req.reason
+    outbound.processed_date = req.processed_date if req.processed_date else datetime.now().strftime("%Y-%m-%d")
+    db.commit()
+    return {"message": f"출고 클레임 등록이 완료되었습니다. (처리일자: {outbound.processed_date})"}
 
 @app.post("/api/outbounds/{outbound_id}/revert")
 def revert_outbound(outbound_id: int, db: Session = Depends(get_db)):
@@ -593,6 +644,10 @@ def revert_outbound(outbound_id: int, db: Session = Depends(get_db)):
     elif outbound.status == "OUT_DONE":
         outbound.status = "OUT_CONFIRM"
         msg = "출고완료가 취소되어 [출고확정리스트]로 반려되었습니다."
+    elif outbound.status == "OUT_CLAIM":
+        outbound.status = "OUT_DONE"
+        outbound.claim_reason = None
+        msg = "출고 클레임이 취소되어 출고완료 상태로 복구되었습니다."
     else:
         msg = "처리할 수 없는 상태입니다."
     db.commit()
@@ -602,7 +657,8 @@ def revert_outbound(outbound_id: int, db: Session = Depends(get_db)):
 def update_outbound(outbound_id: int, req: UpdateOutbound, db: Session = Depends(get_db)):
     outbound = db.query(OutboundRecord).filter(OutboundRecord.id == outbound_id).first()
     if not outbound: raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
-    if outbound.status == "OUT_DONE": raise HTTPException(status_code=400, detail="출고완료 전표는 [작업취소] 후 수정해야 합니다.")
+    if outbound.status in ["OUT_DONE", "OUT_CLAIM"]:
+        raise HTTPException(status_code=400, detail="완료 또는 클레임 상태의 전표는 [작업취소] 후 수정해야 합니다.")
     
     lot = db.query(InventoryLot).filter(InventoryLot.id == outbound.lot_id).first()
     if lot:
@@ -628,6 +684,7 @@ def advance_outbound(outbound_id: int, db: Session = Depends(get_db)):
         msg = "출고확정 단계로 이동되었습니다."
     elif outbound.status == "OUT_CONFIRM":
         outbound.status = "OUT_DONE"
+        outbound.processed_date = datetime.now().strftime("%Y-%m-%d")
         msg = "출고완료 처리가 완료되었습니다."
     else:
         msg = "이미 완료된 전표입니다."
@@ -748,13 +805,17 @@ HTML_PAGE = """<!DOCTYPE html>
       <div class="filter-card" id="dateFilterCard">
         <div class="filter-group">
           <span id="dateFilterLabel"><i class="bi bi-calendar-range"></i> 기준 일자:</span>
-          <input type="date" id="filter_start" class="filter-input" onchange="loadData()" />
+          <input type="date" id="filter_start" class="filter-input" />
           <span>~</span>
-          <input type="date" id="filter_end" class="filter-input" onchange="loadData()" />
+          <input type="date" id="filter_end" class="filter-input" />
         </div>
         
         <div class="filter-group" style="flex-grow:1; max-width:280px;">
-          <input type="text" id="filter_keyword" class="filter-input" style="width:100%;" placeholder="품목/부위/브랜드/BL/이력번호 검색..." onkeyup="loadData()" />
+          <input type="text" id="filter_keyword" class="filter-input" style="width:100%;" placeholder="품목/부위/브랜드/BL/이력번호 검색..." onkeypress="if(event.keyCode==13){loadData();}" />
+        </div>
+
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-primary" onclick="loadData()"><i class="bi bi-search"></i> 조회</button>
         </div>
 
         <div class="filter-btn-group">
@@ -964,7 +1025,38 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 6. 수정 모달 -->
+  <!-- 6. 클레임 등록 모달 -->
+  <div class="modal-overlay" id="claimModal">
+    <div class="modal-box">
+      <h3 style="margin-bottom:14px; color:#dc2626;" id="claimModalTitle">클레임 등록 및 전표 이관</h3>
+      <input type="hidden" id="claim_type" />
+      <input type="hidden" id="claim_id" />
+      <div class="form-group">
+        <label>클레임 처리일자 (KST 기준)</label>
+        <input type="date" id="claim_date" class="form-control" />
+      </div>
+      <div class="form-group">
+        <label>클레임 발생 사유</label>
+        <select id="claim_reason_select" class="form-control" onchange="if(this.value!='직접입력'){document.getElementById('claim_reason_text').value=this.value;}">
+          <option value="표면 갈변 발생 및 변질">표면 갈변 발생 및 변질</option>
+          <option value="중량 부족 / 감량 오차">중량 부족 / 감량 오차</option>
+          <option value="포장 파손 및 진공 풀림">포장 파손 및 진공 풀림</option>
+          <option value="유통기한 경과 / 임박 반품">유통기한 경과 / 임박 반품</option>
+          <option value="직접입력">직접입력</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>상세 사유 기록</label>
+        <input type="text" id="claim_reason_text" class="form-control" value="표면 갈변 발생 및 변질" placeholder="상세 사유를 입력하세요" />
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+        <button class="btn btn-outline" onclick="closeModal('claimModal')">취소</button>
+        <button class="btn btn-danger" onclick="submitClaim()">클레임 이관 확정</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. 수정 모달 -->
   <div class="modal-overlay" id="editModal">
     <div class="modal-box">
       <h3 style="margin-bottom:14px;" id="editModalTitle">정보 수정</h3>
@@ -995,16 +1087,15 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 7. 재고 감량 모달 -->
+  <!-- 8. 재고 감량 모달 -->
   <div class="modal-overlay" id="adjustModal">
     <div class="modal-box">
-      <h3 style="margin-bottom:14px; color:#dc2626;">재고 감량 및 클레임 조정</h3>
+      <h3 style="margin-bottom:14px; color:#dc2626;">재고 감량 및 폐기 조정</h3>
       <input type="hidden" id="adj_lot_id" />
       <div class="form-group"><label>조정 사유 구분</label>
         <select id="adj_type" class="form-control">
           <option value="갈변/변질폐기">갈변/변질 폐기</option>
           <option value="감량/드립로스">자연 감량 / 드립 로스</option>
-          <option value="클레임반품">고객사 클레임 반품</option>
           <option value="실사조정">재고 실사 차이 조정</option>
         </select>
       </div>
@@ -1027,7 +1118,7 @@ HTML_PAGE = """<!DOCTYPE html>
     let partnerSubTab = 'ALL';
     let masterSubTab = 'ITEM_LIST';
 
-    // 한국 표준시 기준 오늘(당일) 기본 설정
+    // 한국 표준시 기준 오늘(당일) 기본 세팅
     const nowKST = new Date();
     const todayStr = nowKST.toISOString().split('T')[0];
     document.getElementById('in_date').value = todayStr;
@@ -1135,7 +1226,8 @@ HTML_PAGE = """<!DOCTYPE html>
         const steps = [
           {k:'IN_REQUEST', n:'1. 입고요청리스트'},
           {k:'IN_CONFIRM', n:'2. 입고확정리스트'},
-          {k:'IN_DONE', n:'3. 입고완료리스트'}
+          {k:'IN_DONE', n:'3. 입고완료리스트'},
+          {k:'IN_CLAIM', n:'4. 입고클레임리스트'}
         ];
         steps.forEach(s => {
           container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`;
@@ -1146,7 +1238,8 @@ HTML_PAGE = """<!DOCTYPE html>
           {k:'OUT_STOCK', n:'1. 출하요청리스트 (현 재고장)'},
           {k:'OUT_REQUEST', n:'2. 출고요청리스트'},
           {k:'OUT_CONFIRM', n:'3. 출고확정리스트'},
-          {k:'OUT_DONE', n:'4. 출고완료리스트'}
+          {k:'OUT_DONE', n:'4. 출고완료리스트'},
+          {k:'OUT_CLAIM', n:'5. 출고클레임리스트'}
         ];
         steps.forEach(s => {
           container.innerHTML += `<div class="sub-tab ${currentSub===s.k?'active':''}" onclick="setSubTab('${s.k}')">${s.n}</div>`;
@@ -1212,28 +1305,53 @@ HTML_PAGE = """<!DOCTYPE html>
 
       // --- [1. 입고 관리 뷰] ---
       if (currentMain === 'INBOUND') {
-        head.innerHTML = `
-          <tr>
-            <th>전표번호</th>
-            <th>입고일자</th>
-            <th>보관창고</th>
-            <th>매입처</th>
-            <th>B/L No.</th>
-            <th>이력번호</th>
-            <th>브랜드</th>
-            <th>품목명</th>
-            <th>부위명</th>
-            <th>보관</th>
-            <th style="text-align:center;">계근유무</th>
-            <th style="text-align:right;">박스</th>
-            <th style="text-align:right;">실중량(kg)</th>
-            <th style="text-align:right;">단가(kg)</th>
-            <th style="text-align:right;">총 매입금액</th>
-            <th>유통기한</th>
-            <th style="text-align:center;">작업 관리</th>
-            <th>GRID코드</th>
-          </tr>
-        `;
+        // 클레임 탭일 때: 입고일자 & 처리일자 맨 앞 배치
+        if (currentSub === 'IN_CLAIM') {
+          head.innerHTML = `
+            <tr>
+              <th style="background:#fee2e2; color:#b91c1c;">입고일자</th>
+              <th style="background:#fee2e2; color:#b91c1c;">클레임 처리일자</th>
+              <th>전표번호</th>
+              <th>보관창고</th>
+              <th>매입처</th>
+              <th>B/L No.</th>
+              <th>이력번호</th>
+              <th>브랜드</th>
+              <th>품목명</th>
+              <th>부위명</th>
+              <th style="text-align:right;">박스</th>
+              <th style="text-align:right;">실중량(kg)</th>
+              <th style="text-align:right;">총 금액</th>
+              <th>클레임 상세 사유</th>
+              <th style="text-align:center;">상태 관리</th>
+              <th>GRID코드</th>
+            </tr>
+          `;
+        } else {
+          head.innerHTML = `
+            <tr>
+              <th>전표번호</th>
+              <th>입고일자</th>
+              <th>보관창고</th>
+              <th>매입처</th>
+              <th>B/L No.</th>
+              <th>이력번호</th>
+              <th>브랜드</th>
+              <th>품목명</th>
+              <th>부위명</th>
+              <th>보관</th>
+              <th style="text-align:center;">계근유무</th>
+              <th style="text-align:right;">박스</th>
+              <th style="text-align:right;">실중량(kg)</th>
+              <th style="text-align:right;">단가(kg)</th>
+              <th style="text-align:right;">총 매입금액</th>
+              <th>유통기한</th>
+              <th style="text-align:center;">작업 관리</th>
+              <th>GRID코드</th>
+            </tr>
+          `;
+        }
+
         const res = await fetch(`/api/inbounds?status=${currentSub}${dateQuery}`);
         let list = await res.json();
 
@@ -1268,18 +1386,50 @@ HTML_PAGE = """<!DOCTYPE html>
             btns = `
               <button class="btn btn-primary" onclick="advIn(${i.id})">확정 <i class="bi bi-arrow-right"></i></button>
               <button class="btn btn-outline" onclick="openEditModal('INBOUND', ${i.id}, '${i.inbound_date}', '${i.bl_no||''}', '${i.brand||''}', '${i.item_name}', '${i.cut_name}', '${i.warehouse||''}', ${i.box_qty}, ${i.weight_kg}, ${i.cost_per_kg}, '${i.is_weighed}')"><i class="bi bi-pencil"></i></button>
+              <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('INBOUND', ${i.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
               <button class="btn btn-outline" style="color:#dc2626;" onclick="revertIn(${i.id}, '요청 취소(삭제)')"><i class="bi bi-trash"></i></button>
             `;
           } else if (currentSub === 'IN_CONFIRM') {
             btns = `
               <button class="btn btn-success" onclick="advIn(${i.id})"><i class="bi bi-check-lg"></i> 입고완료</button>
               <button class="btn btn-outline" onclick="openEditModal('INBOUND', ${i.id}, '${i.inbound_date}', '${i.bl_no||''}', '${i.brand||''}', '${i.item_name}', '${i.cut_name}', '${i.warehouse||''}', ${i.box_qty}, ${i.weight_kg}, ${i.cost_per_kg}, '${i.is_weighed}')"><i class="bi bi-pencil"></i></button>
+              <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('INBOUND', ${i.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
               <button class="btn btn-outline" style="color:#d97706;" onclick="revertIn(${i.id}, '이전 단계 반려')"><i class="bi bi-arrow-counterclockwise"></i> 반려</button>
             `;
-          } else {
+          } else if (currentSub === 'IN_DONE') {
             btns = `
-              <span class="badge" style="background:#dcfce7; color:#15803d; margin-right:4px;">완료</span>
+              <span class="badge" style="background:#dcfce7; color:#15803d; margin-right:4px;">완료됨</span>
+              <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('INBOUND', ${i.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
               <button class="btn btn-outline" style="color:#dc2626;" onclick="revertIn(${i.id}, '입고 취소 및 재고 원복')"><i class="bi bi-arrow-counterclockwise"></i> 작업취소</button>
+            `;
+          } else {
+            // IN_CLAIM
+            btns = `
+              <span class="badge" style="background:#fee2e2; color:#b91c1c; margin-right:4px;">클레임 처리됨</span>
+              <button class="btn btn-outline" style="color:#2563eb;" onclick="revertIn(${i.id}, '클레임 취소 및 입고완료 복구')"><i class="bi bi-arrow-counterclockwise"></i> 원복</button>
+            `;
+          }
+
+          if (currentSub === 'IN_CLAIM') {
+            return `
+              <tr>
+                <td style="background:#fff1f2; font-weight:bold;">${i.inbound_date}</td>
+                <td style="background:#fff1f2; font-weight:bold; color:#b91c1c;">${i.processed_date || '-'}</td>
+                <td><strong>${i.inbound_no}</strong></td>
+                <td><span class="badge badge-warehouse">${i.warehouse || '광주냉장창고'}</span></td>
+                <td>${i.vendor}</td>
+                <td><span class="bl-tag">${i.bl_no || '-'}</span></td>
+                <td><code>${i.trace_no}</code></td>
+                <td><span class="brand-tag">${i.brand || '-'}</span></td>
+                <td><span class="item-tag">${i.item_name}</span></td>
+                <td><strong>${i.cut_name}</strong></td>
+                <td style="text-align:right;"><strong>${i.box_qty}</strong> Box</td>
+                <td style="text-align:right;"><strong>${i.weight_kg.toLocaleString()}</strong> kg</td>
+                <td style="text-align:right;" class="amount-highlight">${i.total_amount.toLocaleString()}원</td>
+                <td style="color:#b91c1c; font-weight:600;">${i.claim_reason || '사유 미기재'}</td>
+                <td style="text-align:center; white-space:nowrap;">${btns}</td>
+                <td style="text-align:center;"><span class="grid-tag">${i.grid_no || '-'}</span></td>
+              </tr>
             `;
           }
 
@@ -1307,7 +1457,7 @@ HTML_PAGE = """<!DOCTYPE html>
               <td style="text-align:center;"><span class="grid-tag">${i.grid_no || '-'}</span></td>
             </tr>
           `;
-        }).join('') : '<tr><td colspan="18" style="text-align:center; padding:20px; color:#94a3b8;">조회된 입고 전표가 없습니다.</td></tr>';
+        }).join('') : '<tr><td colspan="18" style="text-align:center; padding:20px; color:#94a3b8;">조회된 전표가 없습니다.</td></tr>';
 
       // --- [2. 현 재고장 & 출고 관리] ---
       } else if (currentMain === 'OUTBOUND') {
@@ -1385,7 +1535,79 @@ HTML_PAGE = """<!DOCTYPE html>
               </tr>
             `;
           }).join('') : '<tr><td colspan="15" style="text-align:center; padding:20px; color:#94a3b8;">보유 재고가 없습니다.</td></tr>';
+        } else if (currentSub === 'OUT_CLAIM') {
+          // 출고 클레임 뷰
+          head.innerHTML = `
+            <tr>
+              <th style="background:#fee2e2; color:#b91c1c;">입고일자</th>
+              <th style="background:#fee2e2; color:#b91c1c;">클레임 처리일자</th>
+              <th>출고번호</th>
+              <th>매출처</th>
+              <th>보관창고</th>
+              <th>B/L No.</th>
+              <th>이력번호</th>
+              <th>브랜드</th>
+              <th>품목/부위</th>
+              <th style="text-align:right;">출고 박스</th>
+              <th style="text-align:right;">출고 중량(kg)</th>
+              <th style="text-align:right;">총 금액</th>
+              <th>클레임 상세 사유</th>
+              <th style="text-align:center;">상태 관리</th>
+              <th>GRID코드</th>
+            </tr>
+          `;
+          const res = await fetch(`/api/outbounds?status=${currentSub}${dateQuery}`);
+          let list = await res.json();
+
+          if (keyword) {
+            list = list.filter(o => 
+              (o.item_name && o.item_name.toLowerCase().includes(keyword)) ||
+              (o.cut_name && o.cut_name.toLowerCase().includes(keyword)) ||
+              (o.customer && o.customer.toLowerCase().includes(keyword)) ||
+              (o.brand && o.brand.toLowerCase().includes(keyword)) ||
+              (o.bl_no && o.bl_no.toLowerCase().includes(keyword)) ||
+              (o.trace_no && o.trace_no.toLowerCase().includes(keyword)) ||
+              (o.warehouse && o.warehouse.toLowerCase().includes(keyword)) ||
+              (o.grid_no && o.grid_no.toLowerCase().includes(keyword))
+            );
+          }
+
+          let sumBox = 0, sumWeight = 0.0, sumAmount = 0;
+          list.forEach(o => {
+            sumBox += o.box_qty;
+            sumWeight += o.weight_kg;
+            sumAmount += o.total_amount;
+          });
+
+          document.getElementById('sum_count').innerText = list.length.toLocaleString();
+          document.getElementById('sum_box').innerText = sumBox.toLocaleString();
+          document.getElementById('sum_weight').innerText = sumWeight.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
+          document.getElementById('sum_amount').innerText = Math.round(sumAmount).toLocaleString();
+
+          body.innerHTML = list.length ? list.map(o => `
+            <tr>
+              <td style="background:#fff1f2; font-weight:bold;">${o.inbound_date || '-'}</td>
+              <td style="background:#fff1f2; font-weight:bold; color:#b91c1c;">${o.processed_date || o.outbound_date}</td>
+              <td><strong>${o.outbound_no}</strong></td>
+              <td><strong>${o.customer}</strong></td>
+              <td><span class="badge badge-warehouse">${o.warehouse || '광주냉장창고'}</span></td>
+              <td><span class="bl-tag">${o.bl_no || '-'}</span></td>
+              <td><code>${o.trace_no}</code></td>
+              <td><span class="brand-tag">${o.brand || '-'}</span></td>
+              <td><span class="item-tag">${o.item_name}</span> <strong>${o.cut_name}</strong></td>
+              <td style="text-align:right;"><strong>${o.box_qty}</strong> Box</td>
+              <td style="text-align:right;"><strong>${o.weight_kg.toLocaleString()}</strong> kg</td>
+              <td style="text-align:right;" class="amount-highlight">${o.total_amount.toLocaleString()}원</td>
+              <td style="color:#b91c1c; font-weight:600;">${o.claim_reason || '사유 미기재'}</td>
+              <td style="text-align:center; white-space:nowrap;">
+                <span class="badge" style="background:#fee2e2; color:#b91c1c; margin-right:4px;">클레임 처리됨</span>
+                <button class="btn btn-outline" style="color:#2563eb;" onclick="revertOut(${o.id}, '클레임 취소 및 출고완료 복구')"><i class="bi bi-arrow-counterclockwise"></i> 원복</button>
+              </td>
+              <td style="text-align:center;"><span class="grid-tag">${o.grid_no || '-'}</span></td>
+            </tr>
+          `).join('') : '<tr><td colspan="15" style="text-align:center; padding:20px; color:#94a3b8;">조회된 출고 클레임 내역이 없습니다.</td></tr>';
         } else {
+          // 출고요청, 출고확정, 출고완료
           head.innerHTML = `
             <tr>
               <th>출고번호</th>
@@ -1441,17 +1663,20 @@ HTML_PAGE = """<!DOCTYPE html>
               btns = `
                 <button class="btn btn-primary" onclick="advOut(${o.id})">확정 <i class="bi bi-arrow-right"></i></button>
                 <button class="btn btn-outline" onclick="openEditModal('OUTBOUND', ${o.id}, '${o.outbound_date}', '', '', '', '', '', ${o.box_qty}, ${o.weight_kg}, ${o.unit_price_kg}, '')"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('OUTBOUND', ${o.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
                 <button class="btn btn-outline" style="color:#dc2626;" onclick="revertOut(${o.id}, '요청 취소(재고복구)')"><i class="bi bi-arrow-counterclockwise"></i> 요청취소</button>
               `;
             } else if (currentSub === 'OUT_CONFIRM') {
               btns = `
                 <button class="btn btn-success" onclick="advOut(${o.id})"><i class="bi bi-truck"></i> 출고완료</button>
                 <button class="btn btn-outline" onclick="openEditModal('OUTBOUND', ${o.id}, '${o.outbound_date}', '', '', '', '', '', ${o.box_qty}, ${o.weight_kg}, ${o.unit_price_kg}, '')"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('OUTBOUND', ${o.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
                 <button class="btn btn-outline" style="color:#d97706;" onclick="revertOut(${o.id}, '이전 단계 반려')"><i class="bi bi-arrow-counterclockwise"></i> 반려</button>
               `;
             } else {
               btns = `
                 <span class="badge" style="background:#dbeafe; color:#1d4ed8; margin-right:4px;">출고완료</span>
+                <button class="btn btn-outline" style="color:#dc2626;" onclick="openClaimModal('OUTBOUND', ${o.id})"><i class="bi bi-exclamation-triangle"></i> 클레임</button>
                 <button class="btn btn-outline" style="color:#dc2626;" onclick="revertOut(${o.id}, '출고완료 취소')"><i class="bi bi-arrow-counterclockwise"></i> 작업취소</button>
               `;
             }
@@ -1547,6 +1772,33 @@ HTML_PAGE = """<!DOCTYPE html>
     async function advOut(id) { const r = await fetch(`/api/outbounds/${id}/advance`,{method:'POST'}); const d = await r.json(); alert(d.message); loadData(); }
     async function revertIn(id, msg) { if(!confirm(`정말 [${msg}] 작업을 진행하시겠습니까?`)) return; const r = await fetch(`/api/inbounds/${id}/revert`,{method:'POST'}); const d = await r.json(); alert(d.message); loadData(); }
     async function revertOut(id, msg) { if(!confirm(`정말 [${msg}] 작업을 진행하시겠습니까?`)) return; const r = await fetch(`/api/outbounds/${id}/revert`,{method:'POST'}); const d = await r.json(); alert(d.message); loadData(); }
+
+    // 클레임 등록 모달
+    function openClaimModal(type, id) {
+      document.getElementById('claim_type').value = type;
+      document.getElementById('claim_id').value = id;
+      document.getElementById('claim_date').value = todayStr;
+      document.getElementById('claimModalTitle').innerText = `${type==='INBOUND'?'입고':'출고'} 클레임 등록 및 전표 이관 (ID: ${id})`;
+      openModal('claimModal');
+    }
+
+    async function submitClaim() {
+      const type = document.getElementById('claim_type').value;
+      const id = document.getElementById('claim_id').value;
+      const reason = document.getElementById('claim_reason_text').value;
+      const processed_date = document.getElementById('claim_date').value;
+
+      const url = type === 'INBOUND' ? `/api/inbounds/${id}/claim` : `/api/outbounds/${id}/claim`;
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason, processed_date: processed_date })
+      });
+      const d = await r.json();
+      alert(d.message);
+      closeModal('claimModal');
+      loadData();
+    }
 
     async function reqOut(lotId, gridNo, maxBox, avgBoxWeight, costPrice) {
       const cust = prompt(`[${gridNo}] 출하할 매출처 상호명을 입력하세요:`, "(주)하남돼지집"); if(!cust) return;
