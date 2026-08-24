@@ -4,7 +4,8 @@ import random
 from datetime import datetime, date, timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Query
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Query, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import HTMLResponse
 import openpyxl
 from pydantic import BaseModel, ConfigDict
@@ -13,6 +14,25 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 import uvicorn
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+
+# -----------------------------------------------------------------------------
+# 인증 설정
+# -----------------------------------------------------------------------------
+# 운영 배포 시 반드시 환경변수로 교체하세요 (예: os.environ["JWT_SECRET_KEY"]).
+# 기본값은 로컬 개발 편의를 위한 것으로 절대 그대로 운영에 쓰면 안 됩니다.
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "dev-only-change-me-in-production")
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8시간
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+ROLE_ADMIN = "ADMIN"       # 전체 권한
+ROLE_SALES = "SALES"       # 영업: 출고/예약/거래처
+ROLE_WAREHOUSE = "WAREHOUSE"  # 창고: 입고/재고조정/전배
+ALL_ROLES = [ROLE_ADMIN, ROLE_SALES, ROLE_WAREHOUSE]
 
 # -----------------------------------------------------------------------------
 # 1. DB 설정 (SQLite 파일 기반)
@@ -199,7 +219,71 @@ class StockAdjustment(Base):
     adjusted_at = Column(DateTime, default=datetime.now)
 
 
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    full_name = Column(String(50), nullable=True)
+    role = Column(String(20), nullable=False, default=ROLE_SALES)  # ADMIN / SALES / WAREHOUSE
+    is_active = Column(Integer, default=1)  # 1=활성, 0=비활성(퇴사 등)
+    created_at = Column(DateTime, default=datetime.now)
+
+
 Base.metadata.create_all(bind=engine)
+
+
+# -----------------------------------------------------------------------------
+# 인증 유틸리티
+# -----------------------------------------------------------------------------
+def hash_password(plain: str) -> str:
+    return pwd_context.hash(plain)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+
+def create_access_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> "User":
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="인증이 필요합니다. 로그인 후 다시 시도해주세요.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if not token:
+        raise credentials_exception
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        username: Optional[str] = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.username == username).first()
+    if user is None or not user.is_active:
+        raise credentials_exception
+    return user
+
+
+def require_roles(*roles: str):
+    """특정 역할만 접근 가능하도록 제한하는 의존성 팩토리.
+    예: Depends(require_roles(ROLE_ADMIN, ROLE_WAREHOUSE))"""
+    def _checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"이 작업은 {', '.join(roles)} 권한이 필요합니다. (현재: {current_user.role})",
+            )
+        return current_user
+    return _checker
 
 
 def generate_random_grid() -> str:
@@ -428,6 +512,16 @@ def init_sample_data():
             ]
             db.add_all(reservations)
 
+        # 7. 기본 계정 (최초 실행 시 1회 생성)
+        # 운영 배포 전 반드시 비밀번호를 변경하세요.
+        if db.query(User).count() == 0:
+            users = [
+                User(username="admin", hashed_password=hash_password("admin1234!"), full_name="시스템관리자", role=ROLE_ADMIN),
+                User(username="sales1", hashed_password=hash_password("sales1234!"), full_name="김영업", role=ROLE_SALES),
+                User(username="wh1", hashed_password=hash_password("wh1234!"), full_name="최창고", role=ROLE_WAREHOUSE),
+            ]
+            db.add_all(users)
+
         db.commit()
     finally:
         db.close()
@@ -623,6 +717,30 @@ class MessageOut(BaseModel):
     message: str
 
 
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    username: str
+    full_name: Optional[str] = None
+    role: str
+    is_active: int
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    full_name: Optional[str] = ""
+    role: str = ROLE_SALES
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: str
+    username: str
+    full_name: Optional[str] = None
+
+
 class ExpiringLotOut(BaseModel):
     id: int
     grid_no: str
@@ -764,9 +882,61 @@ class WarehouseTransferCreate(BaseModel):
     reason: Optional[str] = ""
 
 
+# --- [인증 API] ---
+@app.post("/api/auth/login", response_model=TokenOut)
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == form_data.username).first()
+    if not user or not user.is_active or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="아이디 또는 비밀번호가 올바르지 않습니다.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = create_access_token({"sub": user.username, "role": user.role})
+    return {
+        "access_token": token, "token_type": "bearer",
+        "role": user.role, "username": user.username, "full_name": user.full_name,
+    }
+
+
+@app.get("/api/auth/me", response_model=UserOut)
+def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+@app.post("/api/auth/users", response_model=MessageOut)
+def create_user(req: UserCreate, current_user: User = Depends(require_roles(ROLE_ADMIN)), db: Session = Depends(get_db)):
+    """관리자만 신규 계정을 생성할 수 있습니다."""
+    if req.role not in ALL_ROLES:
+        raise HTTPException(status_code=400, detail=f"role은 {ALL_ROLES} 중 하나여야 합니다.")
+    if db.query(User).filter(User.username == req.username).first():
+        raise HTTPException(status_code=400, detail="이미 존재하는 아이디입니다.")
+    user = User(username=req.username, hashed_password=hash_password(req.password), full_name=req.full_name, role=req.role)
+    db.add(user)
+    db.commit()
+    return {"message": f"계정 '{req.username}'이(가) {req.role} 권한으로 생성되었습니다."}
+
+
+@app.get("/api/auth/users", response_model=List[UserOut])
+def list_users(current_user: User = Depends(require_roles(ROLE_ADMIN)), db: Session = Depends(get_db)):
+    return db.query(User).order_by(User.id).all()
+
+
+@app.post("/api/auth/users/{user_id}/deactivate", response_model=MessageOut)
+def deactivate_user(user_id: int, current_user: User = Depends(require_roles(ROLE_ADMIN)), db: Session = Depends(get_db)):
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다.")
+    if target.id == current_user.id:
+        raise HTTPException(status_code=400, detail="본인 계정은 비활성화할 수 없습니다.")
+    target.is_active = 0
+    db.commit()
+    return {"message": f"계정 '{target.username}'이(가) 비활성화되었습니다."}
+
+
 # --- [거래처 API] ---
 @app.get("/api/partners", response_model=List[PartnerOut])
-def get_partners(type: Optional[str] = None, db: Session = Depends(get_db)):
+def get_partners(type: Optional[str] = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(Partner)
     if type and type != "ALL":
         q = q.filter(Partner.type == type)
@@ -774,7 +944,7 @@ def get_partners(type: Optional[str] = None, db: Session = Depends(get_db)):
 
 
 @app.post("/api/partners", response_model=MessageOut)
-def create_partner(req: PartnerCreate, db: Session = Depends(get_db)):
+def create_partner(req: PartnerCreate, current_user: User = Depends(require_roles(ROLE_ADMIN)), db: Session = Depends(get_db)):
     p = Partner(name=req.name, type=req.type, biz_no=req.biz_no, contact_person=req.contact_person, phone=req.phone, address=req.address)
     db.add(p)
     db.commit()
@@ -782,7 +952,7 @@ def create_partner(req: PartnerCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/partners/{partner_id}", response_model=MessageOut)
-def delete_partner(partner_id: int, db: Session = Depends(get_db)):
+def delete_partner(partner_id: int, current_user: User = Depends(require_roles(ROLE_ADMIN)), db: Session = Depends(get_db)):
     p = db.query(Partner).filter(Partner.id == partner_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="거래처를 찾을 수 없습니다.")
@@ -793,12 +963,12 @@ def delete_partner(partner_id: int, db: Session = Depends(get_db)):
 
 # --- [품목/부위 마스터 API] ---
 @app.get("/api/items", response_model=List[ItemMasterOut])
-def get_item_masters(db: Session = Depends(get_db)):
+def get_item_masters(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return db.query(ItemMaster).order_by(ItemMaster.id).all()
 
 
 @app.post("/api/items", response_model=MessageOut)
-def create_item_master(req: ItemMasterCreate, db: Session = Depends(get_db)):
+def create_item_master(req: ItemMasterCreate, current_user: User = Depends(require_roles(ROLE_ADMIN)), db: Session = Depends(get_db)):
     if db.query(ItemMaster).filter(ItemMaster.item_code == req.item_code).first():
         raise HTTPException(status_code=400, detail="이미 등록된 품목코드입니다.")
     item = ItemMaster(item_code=req.item_code, item_name=req.item_name, species=req.species)
@@ -808,7 +978,7 @@ def create_item_master(req: ItemMasterCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/items/{item_id}", response_model=MessageOut)
-def delete_item_master(item_id: int, db: Session = Depends(get_db)):
+def delete_item_master(item_id: int, current_user: User = Depends(require_roles(ROLE_ADMIN)), db: Session = Depends(get_db)):
     item = db.query(ItemMaster).filter(ItemMaster.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="품목을 찾을 수 없습니다.")
@@ -819,7 +989,7 @@ def delete_item_master(item_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/cuts", response_model=List[CutMasterOut])
-def get_cut_masters(item_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_cut_masters(item_id: Optional[int] = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = db.query(
         CutMaster.id, CutMaster.item_id, CutMaster.cut_code, CutMaster.cut_name,
         CutMaster.default_storage, ItemMaster.item_name, ItemMaster.species
@@ -836,7 +1006,7 @@ def get_cut_masters(item_id: Optional[int] = None, db: Session = Depends(get_db)
 
 
 @app.post("/api/cuts", response_model=MessageOut)
-def create_cut_master(req: CutMasterCreate, db: Session = Depends(get_db)):
+def create_cut_master(req: CutMasterCreate, current_user: User = Depends(require_roles(ROLE_ADMIN)), db: Session = Depends(get_db)):
     if db.query(CutMaster).filter(CutMaster.cut_code == req.cut_code).first():
         raise HTTPException(status_code=400, detail="이미 등록된 부위코드입니다.")
     cut = CutMaster(item_id=req.item_id, cut_code=req.cut_code, cut_name=req.cut_name, default_storage=req.default_storage)
@@ -846,7 +1016,7 @@ def create_cut_master(req: CutMasterCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/cuts/{cut_id}", response_model=MessageOut)
-def delete_cut_master(cut_id: int, db: Session = Depends(get_db)):
+def delete_cut_master(cut_id: int, current_user: User = Depends(require_roles(ROLE_ADMIN)), db: Session = Depends(get_db)):
     cut = db.query(CutMaster).filter(CutMaster.id == cut_id).first()
     if not cut:
         raise HTTPException(status_code=404, detail="부위를 찾을 수 없습니다.")
@@ -866,6 +1036,7 @@ def get_inbounds(
     # [2단계 성능개선] 페이지네이션 파라미터 추가
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     q = db.query(InboundRecord).filter(InboundRecord.status == status)
@@ -882,7 +1053,7 @@ def get_inbounds(
 
 
 @app.post("/api/inbounds", response_model=MessageOut)
-def create_inbound(req: InboundCreate, db: Session = Depends(get_db)):
+def create_inbound(req: InboundCreate, current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)), db: Session = Depends(get_db)):
     inbound_no = f"IN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(10, 99)}"
     grid_no = generate_random_grid()
     in_date = req.inbound_date if req.inbound_date else datetime.now().strftime("%Y-%m-%d")
@@ -901,7 +1072,11 @@ def create_inbound(req: InboundCreate, db: Session = Depends(get_db)):
 
 
 @app.post("/api/inbounds/upload-excel")
-async def upload_inbound_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_inbound_excel(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     try:
         contents = await file.read()
         wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
@@ -968,7 +1143,11 @@ async def upload_inbound_excel(file: UploadFile = File(...), db: Session = Depen
 
 
 @app.post("/api/inbounds/{inbound_id}/claim", response_model=MessageOut)
-def register_inbound_claim(inbound_id: int, req: ClaimRegister, db: Session = Depends(get_db)):
+def register_inbound_claim(
+    inbound_id: int, req: ClaimRegister,
+    current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     inbound = db.query(InboundRecord).filter(InboundRecord.id == inbound_id).with_for_update().first()
     if not inbound:
         raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
@@ -988,7 +1167,11 @@ def register_inbound_claim(inbound_id: int, req: ClaimRegister, db: Session = De
 
 
 @app.put("/api/inbounds/{inbound_id}", response_model=MessageOut)
-def update_inbound(inbound_id: int, req: UpdateInbound, db: Session = Depends(get_db)):
+def update_inbound(
+    inbound_id: int, req: UpdateInbound,
+    current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     inbound = db.query(InboundRecord).filter(InboundRecord.id == inbound_id).first()
     if not inbound:
         raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
@@ -1012,7 +1195,11 @@ def update_inbound(inbound_id: int, req: UpdateInbound, db: Session = Depends(ge
 
 
 @app.post("/api/inbounds/{inbound_id}/advance", response_model=MessageOut)
-def advance_inbound(inbound_id: int, db: Session = Depends(get_db)):
+def advance_inbound(
+    inbound_id: int,
+    current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     # [2단계 개선] with_for_update로 행 잠금하여 동시 처리 시 중복 반영 방지
     inbound = db.query(InboundRecord).filter(InboundRecord.id == inbound_id).with_for_update().first()
     if not inbound:
@@ -1057,7 +1244,11 @@ def advance_inbound(inbound_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/inbounds/{inbound_id}/revert", response_model=MessageOut)
-def revert_inbound(inbound_id: int, db: Session = Depends(get_db)):
+def revert_inbound(
+    inbound_id: int,
+    current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     inbound = db.query(InboundRecord).filter(InboundRecord.id == inbound_id).with_for_update().first()
     if not inbound:
         raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
@@ -1091,6 +1282,7 @@ def revert_inbound(inbound_id: int, db: Session = Depends(get_db)):
 def get_inventory(
     limit: int = Query(default=500, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     today_check = datetime.now().strftime("%Y-%m-%d")
@@ -1185,6 +1377,7 @@ def get_outbounds(
     month: Optional[str] = None,
     limit: int = Query(default=200, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     q = db.query(OutboundRecord).filter(OutboundRecord.status == status)
@@ -1201,7 +1394,11 @@ def get_outbounds(
 
 
 @app.post("/api/outbounds/create-from-stock", response_model=MessageOut)
-def create_outbound_from_stock(req: OutboundCreate, db: Session = Depends(get_db)):
+def create_outbound_from_stock(
+    req: OutboundCreate,
+    current_user: User = Depends(require_roles(ROLE_SALES, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     # [2단계 개선 #2] with_for_update()로 행 잠금 -> 동시 요청 시 오버셀 방지
     lot = db.query(InventoryLot).filter(InventoryLot.id == req.lot_id).with_for_update().first()
     if not lot:
@@ -1244,7 +1441,11 @@ def create_outbound_from_stock(req: OutboundCreate, db: Session = Depends(get_db
 
 
 @app.post("/api/outbounds/{outbound_id}/advance", response_model=MessageOut)
-def advance_outbound(outbound_id: int, db: Session = Depends(get_db)):
+def advance_outbound(
+    outbound_id: int,
+    current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     outbound = db.query(OutboundRecord).filter(OutboundRecord.id == outbound_id).with_for_update().first()
     if not outbound:
         raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
@@ -1262,7 +1463,11 @@ def advance_outbound(outbound_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/outbounds/{outbound_id}/claim", response_model=MessageOut)
-def register_outbound_claim(outbound_id: int, req: ClaimRegister, db: Session = Depends(get_db)):
+def register_outbound_claim(
+    outbound_id: int, req: ClaimRegister,
+    current_user: User = Depends(require_roles(ROLE_SALES, ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     outbound = db.query(OutboundRecord).filter(OutboundRecord.id == outbound_id).first()
     if not outbound:
         raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
@@ -1275,7 +1480,11 @@ def register_outbound_claim(outbound_id: int, req: ClaimRegister, db: Session = 
 
 
 @app.put("/api/outbounds/{outbound_id}", response_model=MessageOut)
-def update_outbound(outbound_id: int, req: UpdateOutbound, db: Session = Depends(get_db)):
+def update_outbound(
+    outbound_id: int, req: UpdateOutbound,
+    current_user: User = Depends(require_roles(ROLE_SALES, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     outbound = db.query(OutboundRecord).filter(OutboundRecord.id == outbound_id).first()
     if not outbound:
         raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
@@ -1291,7 +1500,11 @@ def update_outbound(outbound_id: int, req: UpdateOutbound, db: Session = Depends
 
 
 @app.post("/api/outbounds/{outbound_id}/revert", response_model=MessageOut)
-def revert_outbound(outbound_id: int, db: Session = Depends(get_db)):
+def revert_outbound(
+    outbound_id: int,
+    current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     outbound = db.query(OutboundRecord).filter(OutboundRecord.id == outbound_id).with_for_update().first()
     if not outbound:
         raise HTTPException(status_code=404, detail="전표를 찾을 수 없습니다.")
@@ -1321,12 +1534,16 @@ def revert_outbound(outbound_id: int, db: Session = Depends(get_db)):
 
 # --- [예약 관리 API] ---
 @app.get("/api/reservations", response_model=List[ReservationOut])
-def get_reservations(status: str, db: Session = Depends(get_db)):
+def get_reservations(status: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return db.query(ReservationRecord).filter(ReservationRecord.status == status).order_by(desc(ReservationRecord.id)).all()
 
 
 @app.post("/api/reservations", response_model=MessageOut)
-def create_reservation(req: ReservationCreate, db: Session = Depends(get_db)):
+def create_reservation(
+    req: ReservationCreate,
+    current_user: User = Depends(require_roles(ROLE_SALES, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     # [2단계 개선] 행 잠금으로 동시 예약 시 초과예약 방지
     lot = db.query(InventoryLot).filter(InventoryLot.id == req.lot_id).with_for_update().first()
     if not lot:
@@ -1368,7 +1585,11 @@ def create_reservation(req: ReservationCreate, db: Session = Depends(get_db)):
 
 
 @app.put("/api/reservations/{res_id}", response_model=MessageOut)
-def update_reservation(res_id: int, req: ReservationUpdate, db: Session = Depends(get_db)):
+def update_reservation(
+    res_id: int, req: ReservationUpdate,
+    current_user: User = Depends(require_roles(ROLE_SALES, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     """[3단계 부가기능] 예약 수량/단가/만료일 수정.
     기존에는 취소 후 재등록만 가능했음 - 영업 담당자 편의를 위해 추가."""
     res = db.query(ReservationRecord).filter(ReservationRecord.id == res_id).with_for_update().first()
@@ -1402,7 +1623,11 @@ def update_reservation(res_id: int, req: ReservationUpdate, db: Session = Depend
 
 
 @app.post("/api/reservations/{res_id}/cancel", response_model=MessageOut)
-def cancel_reservation(res_id: int, req: ReservationCancelReq, db: Session = Depends(get_db)):
+def cancel_reservation(
+    res_id: int, req: ReservationCancelReq,
+    current_user: User = Depends(require_roles(ROLE_SALES, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     res = db.query(ReservationRecord).filter(ReservationRecord.id == res_id).first()
     if not res:
         raise HTTPException(status_code=404, detail="예약 내역을 찾을 수 없습니다.")
@@ -1423,6 +1648,7 @@ def get_claims(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     month: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     claims = []
@@ -1476,7 +1702,11 @@ def get_claims(
 
 
 @app.post("/api/inventory/adjust", response_model=MessageOut)
-def adjust_stock(req: AdjustCreate, db: Session = Depends(get_db)):
+def adjust_stock(
+    req: AdjustCreate,
+    current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     lot = db.query(InventoryLot).filter(InventoryLot.id == req.lot_id).with_for_update().first()
     if not lot:
         raise HTTPException(status_code=404, detail="재고 로트를 찾을 수 없습니다.")
@@ -1495,7 +1725,7 @@ def adjust_stock(req: AdjustCreate, db: Session = Depends(get_db)):
 # =============================================================================
 
 @app.get("/api/inventory/adjustments", response_model=List[StockAdjustmentOut])
-def get_stock_adjustments(lot_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_stock_adjustments(lot_id: Optional[int] = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """재고조정 이력 조회 - 기존에는 POST만 있고 조회 API가 없어
     누가 언제 왜 조정했는지 화면에서 확인할 수 없었음."""
     q = db.query(StockAdjustment)
@@ -1505,7 +1735,7 @@ def get_stock_adjustments(lot_id: Optional[int] = None, db: Session = Depends(ge
 
 
 @app.get("/api/inventory/expiring", response_model=List[ExpiringLotOut])
-def get_expiring_inventory(days: int = Query(default=7, ge=1, le=90), db: Session = Depends(get_db)):
+def get_expiring_inventory(days: int = Query(default=7, ge=1, le=90), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """유통기한 임박 재고 조회 (기본 7일 이내)."""
     today = date.today()
     cutoff = (today + timedelta(days=days)).strftime("%Y-%m-%d")
@@ -1533,7 +1763,7 @@ def get_expiring_inventory(days: int = Query(default=7, ge=1, le=90), db: Sessio
 
 
 @app.get("/api/dashboard/summary", response_model=DashboardSummaryOut)
-def get_dashboard_summary(db: Session = Depends(get_db)):
+def get_dashboard_summary(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """대시보드 요약 지표 - 총 재고 금액, 창고별 재고량, 최근 7일 입출고 추이 등.
     기존에는 리스트 API만 있고 요약 지표가 전혀 없었음."""
     today = date.today()
@@ -1597,7 +1827,11 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
 
 
 @app.post("/api/inventory/transfer", response_model=MessageOut)
-def transfer_warehouse(req: WarehouseTransferCreate, db: Session = Depends(get_db)):
+def transfer_warehouse(
+    req: WarehouseTransferCreate,
+    current_user: User = Depends(require_roles(ROLE_WAREHOUSE, ROLE_ADMIN)),
+    db: Session = Depends(get_db),
+):
     """창고 간 재고 이동(전배). 기존 로트에서 수량을 차감하고, 대상 창고에
     동일 조건(grid_no 기반 신규 grid 발급)의 새 로트를 생성하거나 합산한다."""
     src_lot = db.query(InventoryLot).filter(InventoryLot.id == req.lot_id).with_for_update().first()
