@@ -198,14 +198,20 @@ def calculate_meat_exp_date(from_date_str: str, storage_type: str, item_name: st
     exp = base_date + timedelta(days=add_days - 1)
     return exp.strftime("%Y-%m-%d")
 
-# 초기 시드 데이터
+# -----------------------------------------------------------------------------
+# 테스트용 시드 데이터 초기화 (입고, 재고, 출고, 예약, 클레임)
+# -----------------------------------------------------------------------------
 def init_sample_data():
     db = SessionLocal()
     try:
+        # 1. 거래처 등록
         if db.query(Partner).count() == 0:
             partners = [
                 Partner(name="(주)글로벌미트", type="VENDOR", biz_no="105-86-12345", contact_person="김수입", phone="010-1111-2222", address="서울시 송파구"),
+                Partner(name="(주)아메리칸포크", type="VENDOR", biz_no="214-88-99123", contact_person="이영업", phone="010-3333-4444", address="서울시 강남구"),
                 Partner(name="(주)하남돼지집", type="CUSTOMER", biz_no="120-81-99887", contact_person="박대표", phone="010-5555-6666", address="경기도 하남시 신장동 123"),
+                Partner(name="(주)명륜진사식품", type="CUSTOMER", biz_no="131-86-54321", contact_person="정구매", phone="010-7777-8888", address="서울시 광진구"),
+                Partner(name="(주)대성축산유통", type="CUSTOMER", biz_no="204-85-11223", contact_person="강실장", phone="010-9999-0000", address="인천시 서구"),
                 Partner(name="광주냉장창고", type="WAREHOUSE", biz_no="110-85-44332", contact_person="최창고", phone="031-760-1234", address="경기도 광주시 초월읍"),
                 Partner(name="용인냉동센터", type="WAREHOUSE", biz_no="142-88-55667", contact_person="정소장", phone="031-330-5678", address="경기도 용인시 처인구"),
                 Partner(name="머스크라인(Maersk)", type="SHIPPING", biz_no="101-81-33221", contact_person="선사팀", phone="02-3700-5000", address="서울시 중구"),
@@ -213,6 +219,7 @@ def init_sample_data():
             ]
             db.add_all(partners)
 
+        # 2. 품목 / 부위 마스터 등록
         if db.query(ItemMaster).count() == 0:
             item_pork = ItemMaster(item_code="ITM-PORK", item_name="돈육(돼지)", species="돼지")
             item_beef = ItemMaster(item_code="ITM-BEEF", item_name="우육(소)", species="소")
@@ -222,20 +229,176 @@ def init_sample_data():
             cuts = [
                 CutMaster(item_id=item_pork.id, cut_code="CUT-PORK-01", cut_name="삼겹살", default_storage="냉장"),
                 CutMaster(item_id=item_pork.id, cut_code="CUT-PORK-02", cut_name="목심", default_storage="냉동"),
-                CutMaster(item_id=item_beef.id, cut_code="CUT-BEEF-01", cut_name="척아이롤", default_storage="냉동")
+                CutMaster(item_id=item_pork.id, cut_code="CUT-PORK-03", cut_name="앞다리(전지)", default_storage="냉동"),
+                CutMaster(item_id=item_beef.id, cut_code="CUT-BEEF-01", cut_name="척아이롤", default_storage="냉동"),
+                CutMaster(item_id=item_beef.id, cut_code="CUT-BEEF-02", cut_name="부채살", default_storage="냉장"),
+                CutMaster(item_id=item_beef.id, cut_code="CUT-BEEF-03", cut_name="우삼겹(업진살)", default_storage="냉동")
             ]
             db.add_all(cuts)
 
+        # 3. 입고 전표 (요청, 확정, 완료, 클레임 상태별)
+        if db.query(InboundRecord).count() == 0:
+            inbounds = [
+                # 입고요청 상태 (신규 등록건)
+                InboundRecord(
+                    inbound_no="IN-20260824090001", grid_no="GRID-112233", inbound_date="2026-08-24",
+                    vendor="(주)글로벌미트", bl_no="ONEYVAN8812001", trace_no="802408101122",
+                    process_from_date="2026-08-01", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살",
+                    storage_type="냉장", box_qty=60, weight_kg=1230.0, cost_per_kg=8500, total_amount=10455000,
+                    warehouse="광주냉장창고", exp_date="2026-09-29", is_weighed="N", status="IN_REQUEST"
+                ),
+                # 입고확정 상태
+                InboundRecord(
+                    inbound_no="IN-20260823083011", grid_no="GRID-445566", inbound_date="2026-08-23",
+                    vendor="(주)아메리칸포크", bl_no="MAEU772391002", trace_no="100293819201",
+                    process_from_date="2026-07-15", brand="스위프트", item_name="돈육(돼지)", cut_name="목심",
+                    storage_type="냉동", box_qty=100, weight_kg=2050.0, cost_per_kg=6800, total_amount=13940000,
+                    warehouse="용인냉동센터", exp_date="2028-07-14", is_weighed="N", status="IN_CONFIRM"
+                ),
+                # 입고완료 상태 (실재고 Lot과 연동됨)
+                InboundRecord(
+                    inbound_no="IN-20260810091000", grid_no="GRID-738201", inbound_date="2026-08-10",
+                    processed_date="2026-08-10", vendor="(주)글로벌미트", bl_no="ONEYVAN6948200", trace_no="802410290114",
+                    process_from_date="2026-07-20", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살",
+                    storage_type="냉장", box_qty=50, weight_kg=1020.5, cost_per_kg=8400, total_amount=8572200,
+                    warehouse="광주냉장창고", exp_date="2026-09-17", is_weighed="N", status="IN_DONE"
+                ),
+                InboundRecord(
+                    inbound_no="IN-20260812102000", grid_no="GRID-910482", inbound_date="2026-08-12",
+                    processed_date="2026-08-12", vendor="(주)아메리칸포크", bl_no="MAEU9201948201", trace_no="100392019482",
+                    process_from_date="2026-06-01", brand="엑셀", item_name="우육(소)", cut_name="척아이롤",
+                    storage_type="냉동", box_qty=150, weight_kg=3050.0, cost_per_kg=14500, total_amount=44225000,
+                    warehouse="용인냉동센터", exp_date="2028-05-30", is_weighed="N", status="IN_DONE"
+                ),
+                # 입고 클레임 전표
+                InboundRecord(
+                    inbound_no="IN-20260818140000", grid_no="GRID-554433", inbound_date="2026-08-18",
+                    processed_date="2026-08-19", vendor="(주)글로벌미트", bl_no="ONEYVAN3344112", trace_no="802407229911",
+                    process_from_date="2026-07-01", brand="메이플", item_name="돈육(돼지)", cut_name="삼겹살",
+                    storage_type="냉장", box_qty=20, weight_kg=410.0, cost_per_kg=8300, total_amount=3403000,
+                    warehouse="광주냉장창고", exp_date="2026-08-29", is_weighed="N", status="IN_CLAIM",
+                    claim_reason="창고 입고 검수 시 진공 풀림 및 갈변 확인되어 전량 반품 클레임"
+                )
+            ]
+            db.add_all(inbounds)
+
+        # 4. 현 재고장 (Inventory Lots)
         if db.query(InventoryLot).count() == 0:
             lots = [
-                InventoryLot(grid_no="GRID-738201", sku_code="PK-CAN-01", inbound_date="2026-08-10", bl_no="ONEYVAN6948200", trace_no="802410290114", process_from_date="2026-07-20", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장", initial_box_qty=50, initial_weight_kg=1020.5, avg_box_weight=20.41, current_box_qty=45, current_weight_kg=918.45, cost_per_kg=8400, warehouse="광주냉장창고", exp_date="2026-09-17", is_weighed="N"),
-                InventoryLot(grid_no="GRID-910482", sku_code="BF-USA-05", inbound_date="2026-08-12", bl_no="MAEU9201948201", trace_no="100392019482", process_from_date="2026-06-01", brand="엑셀", item_name="우육(소)", cut_name="척아이롤", storage_type="냉동", initial_box_qty=150, initial_weight_kg=3050.0, avg_box_weight=20.33, current_box_qty=120, current_weight_kg=2439.6, cost_per_kg=14500, warehouse="용인냉동센터", exp_date="2028-05-30", is_weighed="N")
+                # 1) 냉장 삼겹살 (일부 출고 및 예약 걸려 있는 재고)
+                InventoryLot(
+                    grid_no="GRID-738201", sku_code="PK-CAN-01", inbound_date="2026-08-10",
+                    bl_no="ONEYVAN6948200", trace_no="802410290114", process_from_date="2026-07-20",
+                    brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장",
+                    initial_box_qty=50, initial_weight_kg=1020.5, avg_box_weight=20.41,
+                    current_box_qty=30, current_weight_kg=612.3, cost_per_kg=8400,
+                    warehouse="광주냉장창고", exp_date="2026-09-17", is_weighed="N"
+                ),
+                # 2) 냉동 척아이롤
+                InventoryLot(
+                    grid_no="GRID-910482", sku_code="BF-USA-05", inbound_date="2026-08-12",
+                    bl_no="MAEU9201948201", trace_no="100392019482", process_from_date="2026-06-01",
+                    brand="엑셀", item_name="우육(소)", cut_name="척아이롤", storage_type="냉동",
+                    initial_box_qty=150, initial_weight_kg=3050.0, avg_box_weight=20.33,
+                    current_box_qty=110, current_weight_kg=2236.3, cost_per_kg=14500,
+                    warehouse="용인냉동센터", exp_date="2028-05-30", is_weighed="N"
+                ),
+                # 3) 냉동 목심 (신규 추가 재고)
+                InventoryLot(
+                    grid_no="GRID-339912", sku_code="PK-USA-02", inbound_date="2026-08-15",
+                    bl_no="CMACGM1029384", trace_no="100492819283", process_from_date="2026-05-10",
+                    brand="스미스필드", item_name="돈육(돼지)", cut_name="목심", storage_type="냉동",
+                    initial_box_qty=80, initial_weight_kg=1640.0, avg_box_weight=20.50,
+                    current_box_qty=80, current_weight_kg=1640.0, cost_per_kg=6900,
+                    warehouse="용인냉동센터", exp_date="2028-05-09", is_weighed="N"
+                ),
+                # 4) 냉장 부채살 (소비기한 임박 테스트용)
+                InventoryLot(
+                    grid_no="GRID-883311", sku_code="BF-USA-09", inbound_date="2026-08-01",
+                    bl_no="APLU883920192", trace_no="100994820192", process_from_date="2026-06-10",
+                    brand="IBP", item_name="우육(소)", cut_name="부채살", storage_type="냉장",
+                    initial_box_qty=40, initial_weight_kg=812.0, avg_box_weight=20.30,
+                    current_box_qty=25, current_weight_kg=507.5, cost_per_kg=18500,
+                    warehouse="광주냉장창고", exp_date="2026-09-07", is_weighed="N"
+                )
             ]
             db.add_all(lots)
+            db.flush()
+
+        # 5. 출고 전표 (요청, 확정, 완료, 클레임 상태별)
+        if db.query(OutboundRecord).count() == 0:
+            outbounds = [
+                # 출고요청 단계 (GRID-738201에서 10Box 요청)
+                OutboundRecord(
+                    outbound_no="OUT-20260824093001", inbound_date="2026-08-10", outbound_date="2026-08-24",
+                    lot_id=1, customer="(주)하남돼지집", bl_no="ONEYVAN6948200", trace_no="802410290114",
+                    process_from_date="2026-07-20", brand="올리멜", item_name="돈육(돼지)", cut_name="삼겹살",
+                    storage_type="냉장", box_qty=10, avg_box_weight=20.41, weight_kg=204.1,
+                    unit_price_kg=10500, total_amount=2143050, exp_date="2026-09-17",
+                    warehouse="광주냉장창고", is_weighed="N", status="OUT_REQUEST", grid_no="GRID-738201"
+                ),
+                # 출고확정 단계 (GRID-910482에서 20Box 확정)
+                OutboundRecord(
+                    outbound_no="OUT-20260824091500", inbound_date="2026-08-12", outbound_date="2026-08-24",
+                    lot_id=2, customer="(주)명륜진사식품", bl_no="MAEU9201948201", trace_no="100392019482",
+                    process_from_date="2026-06-01", brand="엑셀", item_name="우육(소)", cut_name="척아이롤",
+                    storage_type="냉동", box_qty=20, avg_box_weight=20.33, weight_kg=406.6,
+                    unit_price_kg=16800, total_amount=6830880, exp_date="2028-05-30",
+                    warehouse="용인냉동센터", is_weighed="N", status="OUT_CONFIRM", grid_no="GRID-910482"
+                ),
+                # 출고완료 단계 (GRID-738201에서 과거 10Box 배차 완료)
+                OutboundRecord(
+                    outbound_no="OUT-20260820110000", inbound_date="2026-08-10", outbound_date="2026-08-20",
+                    processed_date="2026-08-20", lot_id=1, customer="(주)대성축산유통", bl_no="ONEYVAN6948200",
+                    trace_no="802410290114", process_from_date="2026-07-20", brand="올리멜", item_name="돈육(돼지)",
+                    cut_name="삼겹살", storage_type="냉장", box_qty=10, avg_box_weight=20.41, weight_kg=204.1,
+                    unit_price_kg=10400, total_amount=2122640, exp_date="2026-09-17",
+                    warehouse="광주냉장창고", is_weighed="N", status="OUT_DONE", grid_no="GRID-738201"
+                ),
+                # 출고 클레임 단계
+                OutboundRecord(
+                    outbound_no="OUT-20260821153000", inbound_date="2026-08-12", outbound_date="2026-08-21",
+                    processed_date="2026-08-22", lot_id=2, customer="(주)명륜진사식품", bl_no="MAEU9201948201",
+                    trace_no="100392019482", process_from_date="2026-06-01", brand="엑셀", item_name="우육(소)",
+                    cut_name="척아이롤", storage_type="냉동", box_qty=5, avg_box_weight=20.33, weight_kg=101.65,
+                    unit_price_kg=16800, total_amount=1707720, exp_date="2028-05-30",
+                    warehouse="용인냉동센터", is_weighed="N", status="OUT_CLAIM", grid_no="GRID-910482",
+                    claim_reason="하차 후 실계근 시 1Box 중량 과소(약 3kg 감량)로 인한 부분 반품"
+                )
+            ]
+            db.add_all(outbounds)
+
+        # 6. 예약 관리 (홀딩 및 취소 누적건)
+        if db.query(ReservationRecord).count() == 0:
+            reservations = [
+                # 활성 예약 건 (GRID-738201 삼겹살 5Box 홀딩)
+                ReservationRecord(
+                    res_no="RES-20260824094000", lot_id=1, sales_rep="김영업", customer="(주)하남돼지집",
+                    grid_no="GRID-738201", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장",
+                    box_qty=5, weight_kg=102.05, unit_price_kg=10800, total_amount=1102140,
+                    exp_date="2026-09-17", expire_date="2026-08-30", status="HOLD"
+                ),
+                # 활성 예약 건 (GRID-910482 척아이롤 15Box 홀딩)
+                ReservationRecord(
+                    res_no="RES-20260824095000", lot_id=2, sales_rep="이영업", customer="(주)대성축산유통",
+                    grid_no="GRID-910482", item_name="우육(소)", cut_name="척아이롤", storage_type="냉동",
+                    box_qty=15, weight_kg=304.95, unit_price_kg=16500, total_amount=5031675,
+                    exp_date="2028-05-30", expire_date="2026-08-31", status="HOLD"
+                ),
+                # 취소/만료 누적 건
+                ReservationRecord(
+                    res_no="RES-20260815100000", lot_id=1, sales_rep="김영업", customer="(주)명륜진사식품",
+                    grid_no="GRID-738201", item_name="돈육(돼지)", cut_name="삼겹살", storage_type="냉장",
+                    box_qty=10, weight_kg=204.1, unit_price_kg=10400, total_amount=2122640,
+                    exp_date="2026-09-17", expire_date="2026-08-20", cancel_date="2026-08-21",
+                    cancel_type="기간만료 자동취소", cancel_reason="예약 유효 만료일 경과 자동 해제", status="CANCELLED"
+                )
+            ]
+            db.add_all(reservations)
+
         db.commit()
     finally:
         db.close()
-
 init_sample_data()
 
 # -----------------------------------------------------------------------------
