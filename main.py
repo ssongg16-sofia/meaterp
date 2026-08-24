@@ -1131,8 +1131,6 @@ def adjust_stock(req: AdjustCreate, db: Session = Depends(get_db)):
     db.add(log)
     db.commit()
     return {"message": f"재고 조정({req.adj_type})이 완료되었습니다."}
-
-# -----------------------------------------------------------------------------
-# 4. 프론트엔드 HTML
-# -----------------------------------------------------------------------------
-# (동일한 UI 코드베이스 유지)
+@app.get("/", response_class=HTMLResponse)
+def serve_dashboard():
+    return HTML_PAGE
