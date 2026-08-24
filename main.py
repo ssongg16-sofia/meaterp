@@ -1,3 +1,12 @@
+"""
+================================================================================
+(주)서울웰푸드 수입축산물 Enterprise ERP (G3 Engine)
+- 사업자번호: 347-81-03002 / 대표이사: 조용훈
+- 주소: 서울특별시 강동구 천중로 39길 19-25 (천호동, 평영빌딩)
+- 실행: uvicorn main:app --host 0.0.0.0 --port 8000
+================================================================================
+"""
+
 import io
 import os
 import random
@@ -34,9 +43,10 @@ ROLE_SALES_SUPPORT = "SALES_SUPPORT"
 ROLE_WAREHOUSE = "WAREHOUSE"
 
 # -----------------------------------------------------------------------------
-# 2. 데이터베이스 설정 (PostgreSQL / SQLite 자동 전환)
+# 2. 데이터베이스 설정 (PostgreSQL / SQLite 호환)
 # -----------------------------------------------------------------------------
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./seoulwellfood_erp.db")
+DB_FILE = os.environ.get("DB_FILE", "seoulwellfood_erp.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DB_FILE}")
 
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
@@ -105,7 +115,7 @@ class InventoryLot(Base):
     warehouse = Column(String(50), nullable=False)
     exp_date = Column(String(20), nullable=False, index=True)
     is_weighed = Column(String(10), default="N")
-    status = Column(String(20), default="IN_DONE")
+    status = Column(String(20), default="IN_DONE")  # ON_WATER, IN_DONE, FREEZE_CONVERTED
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 class ReservationRecord(Base):
@@ -121,7 +131,7 @@ class ReservationRecord(Base):
     unit_price_kg = Column(Float, nullable=False)
     total_amount = Column(Float, nullable=False)
     expire_date = Column(String(20), nullable=True)
-    status = Column(String(20), default="HOLD", index=True)
+    status = Column(String(20), default="HOLD", index=True)  # HOLD, PROMOTED, CANCELLED
     created_at = Column(DateTime, default=datetime.now)
 
 class PartnerFinanceContract(Base):
@@ -148,7 +158,7 @@ class OutboundRecord(Base):
     outbound_no = Column(String(50), unique=True, index=True)
     company_name = Column(String(100), default="(주)서울웰푸드")
     vendor_chain = Column(String(100), nullable=True)
-    trade_type = Column(String(30), default="출고판매")
+    trade_type = Column(String(30), default="출고판매")  # 출고판매, 이체판매
     is_estimated = Column(String(10), default="Y")
     outbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
     grid_no = Column(String(50), nullable=False, index=True)
@@ -170,7 +180,7 @@ class OutboundRecord(Base):
     payment_term = Column(String(50), default="외상 30일 회전")
     due_date = Column(String(20), nullable=True)
     warehouse = Column(String(50), nullable=False)
-    status = Column(String(20), default="OUT_REQUEST", index=True)
+    status = Column(String(20), default="OUT_REQUEST", index=True)  # OUT_REQUEST, OUT_CONFIRM, OUT_DONE, OUT_HELD
     remark = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -252,7 +262,7 @@ def create_access_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_M
     return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> "User":
-    credentials_exception = HTTPException(status_code=401, detail="인증이 필요합니다.")
+    credentials_exception = HTTPException(status_code=401, detail="로그인이 필요합니다.")
     if not token:
         raise credentials_exception
     try:
@@ -269,7 +279,7 @@ def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session 
     return user
 
 # -----------------------------------------------------------------------------
-# 5. 백데이터 마이그레이션 및 시드 초기화
+# 5. 백데이터 마이그레이션 및 시드 데이터 초기화
 # -----------------------------------------------------------------------------
 def init_system_data():
     db = SessionLocal()
@@ -305,35 +315,35 @@ def init_system_data():
                 InventoryLot(
                     company_name="(주)서울웰푸드", grid_no="GRID-771101", sku_code="BF-AMH-170", inbound_date="2026-08-10",
                     bl_no="OOLU2766442080", trace_no="802410290114", est_no="244I", brand="AMH", grade="GF",
-                    item_name="우육(소)", cut_name="소일반갈비(170)", storage_type="냉동",
+                    item_name="우육", cut_name="소일반갈비(170)", storage_type="냉동",
                     initial_box_qty=196, initial_weight_kg=4000.0, avg_box_weight=20.41, current_box_qty=196, current_weight_kg=4000.0,
                     cost_per_kg=14500, warehouse="강동2", exp_date="2028-05-31", is_weighed="N"
                 ),
                 InventoryLot(
                     company_name="(주)서울웰푸드", grid_no="GRID-771102", sku_code="BF-AMH-235", inbound_date="2026-08-10",
                     bl_no="OOLU2766442080", trace_no="802410290115", est_no="244I", brand="AMH", grade="GF",
-                    item_name="우육(소)", cut_name="소일반갈비(235)", storage_type="냉동",
+                    item_name="우육", cut_name="소일반갈비(235)", storage_type="냉동",
                     initial_box_qty=345, initial_weight_kg=7000.0, avg_box_weight=20.29, current_box_qty=345, current_weight_kg=7000.0,
                     cost_per_kg=14200, warehouse="강동2", exp_date="2028-05-31", is_weighed="N"
                 ),
                 InventoryLot(
                     company_name="(주)서울웰푸드", grid_no="GRID-771103", sku_code="PK-KC-01", inbound_date="2026-07-15",
                     bl_no="COSU6319820011", trace_no="802410290330", est_no="1614", brand="킬코이", grade="GF",
-                    item_name="돈육(돼지)", cut_name="돈갈매기살", storage_type="냉동",
+                    item_name="돈육", cut_name="돈갈매기살", storage_type="냉동",
                     initial_box_qty=100, initial_weight_kg=2000.0, avg_box_weight=20.0, current_box_qty=100, current_weight_kg=2000.0,
                     cost_per_kg=8500, warehouse="삼진1", exp_date="2028-07-14", is_weighed="N"
                 ),
                 InventoryLot(
                     company_name="주식회사 티제이에프", grid_no="GRID-771104", sku_code="BF-IBP-RIB", inbound_date="2026-08-18",
                     bl_no="HDMU8820194401", trace_no="802410290552", est_no="352", brand="IBP", grade="CHOICE",
-                    item_name="우육(소)", cut_name="냉장 소갈비살", storage_type="냉장",
+                    item_name="우육", cut_name="냉장 소갈비살", storage_type="냉장",
                     initial_box_qty=80, initial_weight_kg=1600.0, avg_box_weight=20.0, current_box_qty=80, current_weight_kg=1600.0,
                     cost_per_kg=17800, warehouse="삼진1", exp_date="2026-09-04", is_weighed="N"
                 ),
                 InventoryLot(
                     company_name="(주)서울웰푸드", grid_no="GRID-771105", sku_code="BF-AMH-TEN", inbound_date="2026-08-28",
                     bl_no="ONEY9940128840", trace_no="802410290771", est_no="244I", brand="AMH", grade="PR",
-                    item_name="우육(소)", cut_name="소안심", storage_type="선적중",
+                    item_name="우육", cut_name="소안심", storage_type="선적중",
                     initial_box_qty=200, initial_weight_kg=4000.0, avg_box_weight=20.0, current_box_qty=200, current_weight_kg=4000.0,
                     cost_per_kg=19500, warehouse="부산항(예정)", exp_date="2028-08-20", is_weighed="N", status="ON_WATER"
                 )
@@ -368,7 +378,7 @@ def init_system_data():
 init_system_data()
 
 # -----------------------------------------------------------------------------
-# 6. REST API 엔드포인트
+# 6. FastAPI 라우팅 및 REST API 엔진
 # -----------------------------------------------------------------------------
 app = FastAPI(title="SeoulWellFood G3 ERP System")
 
@@ -379,6 +389,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class LoginReq(BaseModel):
+    username: str
+    password: str
 
 class ProformaReq(BaseModel):
     grid_no: str
@@ -403,9 +417,25 @@ class OutboundDetailReq(BaseModel):
     destination: str = ""
     remark: Optional[str] = ""
 
+class TransferReq(BaseModel):
+    grid_no: str
+    to_warehouse: str
+    box_qty: int
+    dispatch_cost: float = 0.0
+
 class FreezingConvertReq(BaseModel):
     grid_no: str
     quick_freeze_cost: float = 80.0
+
+class ReconcileReq(BaseModel):
+    outbound_no: str
+    actual_weight_kg: float
+
+class FinanceExtendReq(BaseModel):
+    contract_no: str
+    new_due_date: str
+    adjusted_margin_rate: float
+    extension_fee: float = 0.0
 
 class DevIssueReq(BaseModel):
     issue_type: str
@@ -421,6 +451,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 일치하지 않습니다.")
     token = create_access_token({"sub": user.username, "role": user.role, "name": user.full_name})
     return {"access_token": token, "token_type": "bearer", "role": user.role, "full_name": user.full_name, "username": user.username}
+
+@app.get("/api/companies")
+def get_companies(db: Session = Depends(get_db)):
+    return db.query(CompanyMaster).all()
 
 @app.get("/api/inventory")
 def get_inventory(view_type: str = "STOCK", db: Session = Depends(get_db)):
@@ -663,7 +697,7 @@ def create_dev_issue(req: DevIssueReq, current_user: User = Depends(get_current_
     return {"message": "개선안/오류 제보가 성공적으로 등록되었습니다."}
 
 # -----------------------------------------------------------------------------
-# 7. 반응형 프론트엔드 UI (SPA)
+# 7. 모바일 최적화 반응형 프론트엔드 UI (SPA)
 # -----------------------------------------------------------------------------
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="ko">
