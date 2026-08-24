@@ -34,10 +34,9 @@ ROLE_SALES_SUPPORT = "SALES_SUPPORT"
 ROLE_WAREHOUSE = "WAREHOUSE"
 
 # -----------------------------------------------------------------------------
-# 2. 데이터베이스 설정 (PostgreSQL / SQLite 호환)
+# 2. 데이터베이스 설정 (PostgreSQL / SQLite 자동 전환)
 # -----------------------------------------------------------------------------
-DB_FILE = os.environ.get("DB_FILE", "seoulwellfood_erp.db")
-DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DB_FILE}")
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./seoulwellfood_erp.db")
 
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
@@ -79,7 +78,7 @@ class WarehouseRate(Base):
     warehouse_name = Column(String(50), unique=True, nullable=False)
     frozen_rate = Column(Float, default=1.5)  # 원/kg/일
     chilled_rate = Column(Float, default=2.5)
-    handling_in_fee = Column(Float, default=10.0)  # 입고 상하차비
+    handling_in_fee = Column(Float, default=10.0)
     handling_out_fee = Column(Float, default=10.0)
 
 class InventoryLot(Base):
@@ -106,7 +105,7 @@ class InventoryLot(Base):
     warehouse = Column(String(50), nullable=False)
     exp_date = Column(String(20), nullable=False, index=True)
     is_weighed = Column(String(10), default="N")
-    status = Column(String(20), default="IN_DONE")  # ON_WATER, IN_DONE, FREEZE_CONVERTED
+    status = Column(String(20), default="IN_DONE")
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 class ReservationRecord(Base):
@@ -122,7 +121,7 @@ class ReservationRecord(Base):
     unit_price_kg = Column(Float, nullable=False)
     total_amount = Column(Float, nullable=False)
     expire_date = Column(String(20), nullable=True)
-    status = Column(String(20), default="HOLD", index=True)  # HOLD, PROMOTED, CANCELLED
+    status = Column(String(20), default="HOLD", index=True)
     created_at = Column(DateTime, default=datetime.now)
 
 class PartnerFinanceContract(Base):
@@ -131,7 +130,7 @@ class PartnerFinanceContract(Base):
     contract_no = Column(String(50), unique=True, index=True)
     grid_no = Column(String(50), nullable=False, index=True)
     partner_company = Column(String(100), nullable=False)  # 프로즌파트너스, 동원홈푸드, 미트박스
-    finance_model = Column(String(30), default="BUY_BACK")  # BUY_BACK, IMPORT_AGENCY
+    finance_model = Column(String(30), default="BUY_BACK")
     pledge_date = Column(String(20), nullable=False)
     due_date = Column(String(20), nullable=False)
     box_qty = Column(Integer, nullable=False)
@@ -149,7 +148,7 @@ class OutboundRecord(Base):
     outbound_no = Column(String(50), unique=True, index=True)
     company_name = Column(String(100), default="(주)서울웰푸드")
     vendor_chain = Column(String(100), nullable=True)
-    trade_type = Column(String(30), default="출고판매")  # 출고판매, 이체판매
+    trade_type = Column(String(30), default="출고판매")
     is_estimated = Column(String(10), default="Y")
     outbound_date = Column(String(20), default=lambda: datetime.now().strftime("%Y-%m-%d"))
     grid_no = Column(String(50), nullable=False, index=True)
@@ -162,8 +161,8 @@ class OutboundRecord(Base):
     cut_name = Column(String(100), nullable=False)
     storage_type = Column(String(20), nullable=False)
     box_qty = Column(Integer, nullable=False)
-    weight_kg = Column(Float, nullable=False)  # 가중량
-    actual_weight_kg = Column(Float, nullable=True)  # 실계근
+    weight_kg = Column(Float, nullable=False)
+    actual_weight_kg = Column(Float, nullable=True)
     reconciled_amount = Column(Float, default=0.0)
     reconciled_status = Column(String(20), default="UNRECONCILED")
     unit_price_kg = Column(Float, nullable=False)
@@ -171,7 +170,7 @@ class OutboundRecord(Base):
     payment_term = Column(String(50), default="외상 30일 회전")
     due_date = Column(String(20), nullable=True)
     warehouse = Column(String(50), nullable=False)
-    status = Column(String(20), default="OUT_REQUEST", index=True)  # OUT_REQUEST, OUT_CONFIRM, OUT_DONE, OUT_HELD
+    status = Column(String(20), default="OUT_REQUEST", index=True)
     remark = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -207,18 +206,18 @@ class AccountsReceivable(Base):
     weight_diff_amount = Column(Float, default=0.0)
     final_bill_amount = Column(Float, nullable=False)
     paid_amount = Column(Float, default=0.0)
-    status = Column(String(20), default="UNPAID", index=True)  # UNPAID, PARTIAL, PAID, OVERDUE
+    status = Column(String(20), default="UNPAID", index=True)
 
 class DevIssue(Base):
     __tablename__ = "dev_issues"
     id = Column(Integer, primary_key=True, index=True)
-    issue_type = Column(String(30), default="기능개선")  # 기능개선, 오류/버그, 데이터정정
+    issue_type = Column(String(30), default="기능개선")
     title = Column(String(200), nullable=False)
     content = Column(String(1000), nullable=False)
     related_menu = Column(String(50), default="재고관리")
     grid_link = Column(String(50), nullable=True)
     author = Column(String(50), nullable=False)
-    status = Column(String(20), default="SUBMITTED")  # SUBMITTED, REVIEWING, IN_PROGRESS, RESOLVED
+    status = Column(String(20), default="SUBMITTED")
     created_at = Column(DateTime, default=datetime.now)
 
 class User(Base):
@@ -234,7 +233,7 @@ class User(Base):
 Base.metadata.create_all(bind=engine)
 
 # -----------------------------------------------------------------------------
-# 4. 유틸리티 & 비밀번호 검증
+# 4. 유틸리티 & 보안 함수
 # -----------------------------------------------------------------------------
 def hash_password(plain: str) -> str:
     salt = bcrypt.gensalt()
@@ -253,7 +252,7 @@ def create_access_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_M
     return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> "User":
-    credentials_exception = HTTPException(status_code=401, detail="로그인이 필요합니다.")
+    credentials_exception = HTTPException(status_code=401, detail="인증이 필요합니다.")
     if not token:
         raise credentials_exception
     try:
@@ -270,7 +269,7 @@ def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session 
     return user
 
 # -----------------------------------------------------------------------------
-# 5. 백데이터 마이그레이션 및 시드 데이터 초기화
+# 5. 백데이터 마이그레이션 및 시드 초기화
 # -----------------------------------------------------------------------------
 def init_system_data():
     db = SessionLocal()
@@ -301,7 +300,6 @@ def init_system_data():
             ]
             db.add_all(users)
 
-        # 구글 스프레드시트 마이그레이션 백데이터 로드
         if db.query(InventoryLot).count() == 0:
             lots = [
                 InventoryLot(
@@ -343,7 +341,6 @@ def init_system_data():
             db.add_all(lots)
             db.flush()
 
-            # 시드 예약(HOLD) 내역
             res1 = ReservationRecord(
                 res_no="RES-260824-001", grid_no="GRID-771101", sales_rep="sales_kim", sales_rep_name="김영업 과장",
                 customer="(주)플랜비에프에스", box_qty=20, weight_kg=408.2, unit_price_kg=15500, total_amount=6327100,
@@ -356,7 +353,6 @@ def init_system_data():
             )
             db.add_all([res1, res2])
 
-            # 동원홈푸드 파이낸스 담보 시드
             fin1 = PartnerFinanceContract(
                 contract_no="FIN-20260810-01", grid_no="GRID-771101", partner_company="동원홈푸드",
                 finance_model="IMPORT_AGENCY", pledge_date="2026-08-10", due_date="2026-09-20",
@@ -372,7 +368,7 @@ def init_system_data():
 init_system_data()
 
 # -----------------------------------------------------------------------------
-# 6. FastAPI 라우팅 및 REST API 엔진
+# 6. REST API 엔드포인트
 # -----------------------------------------------------------------------------
 app = FastAPI(title="SeoulWellFood G3 ERP System")
 
@@ -383,11 +379,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# API 요청/응답 Pydantic 스키마
-class LoginReq(BaseModel):
-    username: str
-    password: str
 
 class ProformaReq(BaseModel):
     grid_no: str
@@ -412,25 +403,9 @@ class OutboundDetailReq(BaseModel):
     destination: str = ""
     remark: Optional[str] = ""
 
-class TransferReq(BaseModel):
-    grid_no: str
-    to_warehouse: str
-    box_qty: int
-    dispatch_cost: float = 0.0
-
 class FreezingConvertReq(BaseModel):
     grid_no: str
     quick_freeze_cost: float = 80.0
-
-class ReconcileReq(BaseModel):
-    outbound_no: str
-    actual_weight_kg: float
-
-class FinanceExtendReq(BaseModel):
-    contract_no: str
-    new_due_date: str
-    adjusted_margin_rate: float
-    extension_fee: float = 0.0
 
 class DevIssueReq(BaseModel):
     issue_type: str
@@ -447,13 +422,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     token = create_access_token({"sub": user.username, "role": user.role, "name": user.full_name})
     return {"access_token": token, "token_type": "bearer", "role": user.role, "full_name": user.full_name, "username": user.username}
 
-@app.get("/api/companies")
-def get_companies(db: Session = Depends(get_db)):
-    return db.query(CompanyMaster).all()
-
 @app.get("/api/inventory")
 def get_inventory(view_type: str = "STOCK", db: Session = Depends(get_db)):
-    # 양편넣기 보관료 및 실시간 가용/예약/담보 계산
     today = date.today()
     rates = {r.warehouse_name: r.frozen_rate for r in db.query(WarehouseRate).all()}
 
@@ -463,7 +433,6 @@ def get_inventory(view_type: str = "STOCK", db: Session = Depends(get_db)):
     else:
         lots = query.filter(InventoryLot.status != "ON_WATER", InventoryLot.current_box_qty > 0).order_by(InventoryLot.exp_date).all()
 
-    # 예약 집계
     res_rows = db.query(ReservationRecord).filter(ReservationRecord.status == "HOLD").all()
     res_map = {}
     res_details = {}
@@ -480,7 +449,6 @@ def get_inventory(view_type: str = "STOCK", db: Session = Depends(get_db)):
             "total_amount": r.total_amount
         })
 
-    # 담보 집계
     pledges = db.query(PartnerFinanceContract).filter(PartnerFinanceContract.status == "HOLD_BY_PARTNER").all()
     pledge_map = {}
     for p in pledges:
@@ -488,7 +456,6 @@ def get_inventory(view_type: str = "STOCK", db: Session = Depends(get_db)):
 
     result = []
     for l in lots:
-        # 양편넣기 보관일수 및 보관료 계산
         try:
             in_d = datetime.strptime(l.inbound_date, "%Y-%m-%d").date()
             storage_days = (today - in_d).days + 1 if today >= in_d else 0
@@ -502,7 +469,6 @@ def get_inventory(view_type: str = "STOCK", db: Session = Depends(get_db)):
         pledged = pledge_map.get(l.grid_no, 0)
         available = max(0, l.current_box_qty - reserved - pledged)
 
-        # 냉장 D-10 체크
         try:
             exp_d = datetime.strptime(l.exp_date, "%Y-%m-%d").date()
             days_to_exp = (exp_d - today).days
@@ -572,7 +538,6 @@ def create_outbound_detail(req: OutboundDetailReq, current_user: User = Depends(
     total = round(weight * req.unit_price_kg)
     out_no = f"OUT-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(10,99)}"
 
-    # 결제 만기일 산출
     today = date.today()
     if "30일" in req.payment_term:
         due_d = (today + timedelta(days=30)).strftime("%Y-%m-%d")
@@ -583,11 +548,9 @@ def create_outbound_detail(req: OutboundDetailReq, current_user: User = Depends(
     else:
         due_d = today.strftime("%Y-%m-%d")
 
-    # 재고 차감
     lot.current_box_qty = max(0, lot.current_box_qty - req.box_qty)
     lot.current_weight_kg = max(0.0, round(lot.current_weight_kg - weight, 2))
 
-    # 출고 전표 생성
     out = OutboundRecord(
         outbound_no=out_no, company_name=req.company_name, vendor_chain=req.vendor_chain,
         trade_type=req.trade_type, is_estimated=req.is_estimated, outbound_date=today.strftime("%Y-%m-%d"),
@@ -599,7 +562,6 @@ def create_outbound_detail(req: OutboundDetailReq, current_user: User = Depends(
     )
     db.add(out)
 
-    # 배차 연동
     if req.dispatch_cost > 0 or req.destination:
         disp_no = f"DSP-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         disp = DispatchRecord(
@@ -611,7 +573,6 @@ def create_outbound_detail(req: OutboundDetailReq, current_user: User = Depends(
         )
         db.add(disp)
 
-    # 미수/채권 원장 자동 연동
     ar_no = f"AR-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     ar = AccountsReceivable(
         ar_no=ar_no, company_name=req.company_name, customer_name=req.customer,
@@ -702,7 +663,7 @@ def create_dev_issue(req: DevIssueReq, current_user: User = Depends(get_current_
     return {"message": "개선안/오류 제보가 성공적으로 등록되었습니다."}
 
 # -----------------------------------------------------------------------------
-# 7. 모바일 최적화 반응형 프론트엔드 UI (SPA)
+# 7. 반응형 프론트엔드 UI (SPA)
 # -----------------------------------------------------------------------------
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="ko">
@@ -720,7 +681,6 @@ HTML_PAGE = """<!DOCTYPE html>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif; }
     body { background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
 
-    /* 사이드바 데스크톱 */
     aside { width: 260px; background: var(--sidebar); color: #94a3b8; display: flex; flex-direction: column; flex-shrink: 0; z-index: 50; transition: transform 0.3s ease; }
     .brand { padding: 18px 20px; font-size: 1.15rem; font-weight: 800; color: #fff; border-bottom: 1px solid #1e293b; display: flex; align-items: center; justify-content: space-between; }
     .user-card { padding: 12px 18px; background: #1e293b; color: #cbd5e1; font-size: 0.82rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
@@ -728,13 +688,11 @@ HTML_PAGE = """<!DOCTYPE html>
     .nav-item { padding: 10px 20px; color: #94a3b8; cursor: pointer; display: flex; align-items: center; gap: 10px; font-size: 0.86rem; font-weight: 500; transition: 0.15s; }
     .nav-item:hover, .nav-item.active { background: #1e293b; color: #38bdf8; font-weight: 700; border-left: 4px solid #38bdf8; }
 
-    /* 메인 콘텐츠 영역 */
     main { flex-grow: 1; display: flex; flex-direction: column; height: 100vh; overflow-y: auto; position: relative; }
     header { background: #fff; border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 30; }
     .mobile-header-btn { display: none; background: none; border: none; font-size: 1.4rem; color: var(--text); cursor: pointer; }
     .content { padding: 18px 24px; display: flex; flex-direction: column; gap: 14px; padding-bottom: 80px; }
 
-    /* 카드 및 테이블 */
     .card { background: #fff; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
     .table-container { overflow-x: auto; max-height: calc(100vh - 220px); }
     table { width: 100%; border-collapse: collapse; font-size: 0.83rem; text-align: left; }
@@ -742,7 +700,6 @@ HTML_PAGE = """<!DOCTYPE html>
     td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; }
     tr:hover td { background: #f1f5f9; }
 
-    /* 버튼 및 배지 */
     .btn { padding: 6px 12px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; border: 1px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
     .btn-primary { background: var(--primary); color: #fff; }
     .btn-outline { background: #fff; border-color: var(--border); color: #334155; }
@@ -753,7 +710,6 @@ HTML_PAGE = """<!DOCTYPE html>
     .badge-red { background: #fee2e2; color: #991b1b; }
     .grid-code { font-family: monospace; font-weight: 700; background: #312e81; color: #e0e7ff; padding: 2px 6px; border-radius: 4px; }
 
-    /* 호버 팝오버 툴팁 */
     .res-hover { color: #0284c7; font-weight: 700; text-decoration: underline dotted; cursor: pointer; position: relative; }
     .res-tooltip {
       display: none; position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%);
@@ -762,19 +718,16 @@ HTML_PAGE = """<!DOCTYPE html>
     }
     .res-hover:hover .res-tooltip { display: block; }
 
-    /* 모달 워크스페이스 */
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); z-index: 200; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
     .modal-box { background: #fff; border-radius: 12px; width: 780px; max-width: 95vw; max-height: 90vh; overflow-y: auto; padding: 24px; }
     .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     .form-group { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; }
     .form-control { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; outline: none; }
 
-    /* 모바일 하단 탭바 */
     .mobile-bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; height: 56px; background: #fff; border-top: 1px solid var(--border); z-index: 40; justify-content: space-around; align-items: center; }
     .mobile-nav-btn { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 0.72rem; color: var(--muted); background: none; border: none; }
     .mobile-nav-btn.active { color: var(--primary); font-weight: 700; }
 
-    /* 반응형 모바일 미디어 쿼리 */
     @media (max-width: 768px) {
       aside { position: fixed; left: -260px; top: 0; bottom: 0; }
       aside.open { transform: translateX(260px); }
@@ -783,7 +736,6 @@ HTML_PAGE = """<!DOCTYPE html>
       .form-grid-2 { grid-template-columns: 1fr; }
     }
 
-    /* 서식 인쇄 */
     @media print {
       body * { visibility: hidden; }
       #printArea, #printArea * { visibility: visible; }
@@ -792,7 +744,6 @@ HTML_PAGE = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <!-- 로그인 모달 -->
   <div class="modal-overlay" id="loginModal" style="display:flex;">
     <div class="modal-box" style="width:380px;">
       <h3 style="text-align:center; margin-bottom:16px;"><i class="bi bi-box-seam-fill" style="color:var(--primary);"></i> (주)서울웰푸드 ERP</h3>
@@ -802,7 +753,6 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 사이드바 -->
   <aside id="appSidebar">
     <div class="brand">
       <span><i class="bi bi-grid-fill"></i> 서울웰푸드 G3</span>
@@ -821,7 +771,6 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </aside>
 
-  <!-- 메인 뷰 -->
   <main>
     <header>
       <div style="display:flex; align-items:center; gap:12px;">
@@ -844,7 +793,6 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </main>
 
-  <!-- 상세 작성 모달 -->
   <div class="modal-overlay" id="workModal">
     <div class="modal-box">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
@@ -859,7 +807,6 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 모바일 하단 퀵바 -->
   <div class="mobile-bottom-nav">
     <button class="mobile-nav-btn active" onclick="navTab('STOCK')"><i class="bi bi-boxes"></i>재고장</button>
     <button class="mobile-nav-btn" onclick="navTab('PROFORMA')"><i class="bi bi-journal-text"></i>가전표</button>
@@ -868,7 +815,6 @@ HTML_PAGE = """<!DOCTYPE html>
     <button class="mobile-nav-btn" onclick="navTab('DEV')"><i class="bi bi-chat-dots"></i>게시판</button>
   </div>
 
-  <!-- 인쇄 템플릿 영역 (11줄 고정) -->
   <div id="printArea" style="display:none; padding:20px; font-family:'Malgun Gothic'; color:#000;">
     <div style="text-align:center; font-size:24px; font-weight:900; margin-bottom:16px;">출 고 / 이 체 요 청 서</div>
     <div id="printContent"></div>
