@@ -24,7 +24,6 @@ JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "meatflow-enterprise-secret-ke
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8시간
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 ROLE_ADMIN = "ADMIN"          # 전체 권한
@@ -220,11 +219,17 @@ Base.metadata.create_all(bind=engine)
 # 인증 및 헬퍼 유틸리티
 # -----------------------------------------------------------------------------
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+    # 문자열을 바이트로 변환 후 해싱하고 다시 문자열로 반환
+    salt = bcrypt.gensalt()
+    hashed_bytes = bcrypt.hashpw(plain.encode('utf-8'), salt)
+    return hashed_bytes.decode('utf-8')
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
-
+    # 입력된 비밀번호와 DB의 해시된 비밀번호를 비교
+    try:
+        return bcrypt.checkpw(plain.encode('utf-8'), hashed.encode('utf-8'))
+    except ValueError:
+        return False
 def create_access_token(data: dict, expires_minutes: int = ACCESS_TOKEN_EXPIRE_MINUTES) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
